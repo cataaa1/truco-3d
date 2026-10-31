@@ -30,8 +30,9 @@ TABLE_Y = 0.74
 # (posición, color lineal, potencia)
 LAMPS = [
     ((0.0, 2.5, 0.0), (1.0, 0.72, 0.42), 5.0),
-    ((-2.1, 2.75, -2.1), (1.0, 0.68, 0.36), 2.6),
-    ((2.1, 2.75, -2.1), (1.0, 0.68, 0.36), 2.6),
+    ((-1.9, 2.5, -1.6), (1.0, 0.7, 0.4), 3.2),
+    ((1.9, 2.5, -1.6), (1.0, 0.7, 0.4), 3.2),
+    ((0.0, 2.2, -3.2), (1.0, 0.74, 0.45), 1.3),
     ((3.2, 2.1, 0.2), (1.0, 0.62, 0.32), 1.5),
     ((-3.2, 1.9, 0.6), (0.85, 0.85, 0.8), 2.4),
     ((0.0, 3.0, 2.8), (1.0, 0.72, 0.45), 1.8),
@@ -266,6 +267,276 @@ def frame(part, x0, x1, y0, y1, plane, region, tint=WHITE, thickness=0.05):
     rect(x0 + thickness, x1 - thickness, y0 + thickness, y1 - thickness, 0.02, region, tint)
 
 
+TURQUOISE = srgb(0x3fa8b8)
+CREAM_WARE = srgb(0xe8e2d2)
+STONE = srgb(0x77706a)
+MAHOGANY = srgb(0xa85a30)
+MAHOGANY_DARK = srgb(0x5e2e17)
+GLASSWARE = (0.62, 0.72, 0.74)
+
+
+def rounded_plan(cx, cz, hx, hz, radius, corner_segments=5):
+    """Contorno en planta de un rectángulo con esquinas redondeadas."""
+    points = []
+    for corner, (sx, sz, start) in enumerate(((1, 1, 0.0), (-1, 1, 0.5), (-1, -1, 1.0), (1, -1, 1.5))):
+        for step in range(corner_segments + 1):
+            angle = (start + 0.5 * step / corner_segments) * math.pi
+            points.append((cx + sx * (hx - radius) + radius * math.cos(angle), cz + sz * (hz - radius) + radius * math.sin(angle)))
+    return points
+
+
+def extrude(part, points, y0, y1, region="white", tint=WHITE, flare=0.0):
+    """Paredes de un contorno cerrado. `flare` abre o cierra arriba, para las molduras."""
+    cx = sum(p[0] for p in points) / len(points)
+    cz = sum(p[1] for p in points) / len(points)
+    for index, (x0, z0) in enumerate(points):
+        x1, z1 = points[(index + 1) % len(points)]
+        mx, mz = (x0 + x1) / 2 - cx, (z0 + z1) / 2 - cz
+        length = math.hypot(mx, mz) or 1
+        normal = (mx / length, 0.25 if flare else 0.0, mz / length)
+        scale = lambda x, z, k: (cx + (x - cx) * k, cz + (z - cz) * k)
+        k = 1 + flare
+        xa, za = scale(x0, z0, k)
+        xb, zb = scale(x1, z1, k)
+        part.face(((x0, y0, z0), (x1, y0, z1), (xb, y1, zb), (xa, y1, za)), region, ((0, 1), (1, 1), (1, 0), (0, 0)), tint, normal)
+
+
+def cap(part, points, y, region="white", tint=WHITE, uv_span=(6.6, 1.0)):
+    cx = sum(p[0] for p in points) / len(points)
+    cz = sum(p[1] for p in points) / len(points)
+    uv = lambda x, z: ((x - cx) / uv_span[0] + 0.5, (z - cz) / uv_span[1] + 0.5)
+    for index, (x0, z0) in enumerate(points):
+        x1, z1 = points[(index + 1) % len(points)]
+        part.face(((cx, y, cz), (x0, y, z0), (x1, y, z1)), region, (uv(cx, cz), uv(x0, z0), uv(x1, z1)), tint, (0, 1, 0))
+
+
+def limb(part, a, b, r0, r1, tint=WHITE, segments=6):
+    axis = normalize(sub(b, a))
+    helper_axis = (0.0, 1.0, 0.0) if abs(axis[1]) < 0.9 else (1.0, 0.0, 0.0)
+    u = normalize(cross(axis, helper_axis))
+    v = cross(axis, u)
+
+    def ring(center, radius, t):
+        return tuple(center[k] + radius * (math.cos(t) * u[k] + math.sin(t) * v[k]) for k in range(3))
+
+    for i in range(segments):
+        t0, t1 = 2 * math.pi * i / segments, 2 * math.pi * (i + 1) / segments
+        mid = (t0 + t1) / 2
+        normal = tuple(math.cos(mid) * u[k] + math.sin(mid) * v[k] for k in range(3))
+        part.face((ring(a, r0, t0), ring(a, r0, t1), ring(b, r1, t1), ring(b, r1, t0)), "white", ((0, 1), (1, 1), (1, 0), (0, 0)), tint, normal)
+
+
+def carved_panel(part, x0, x1, y0, y1, z):
+    """Panel tallado: marco en relieve, fondo hundido y medallón central."""
+    w, h = x1 - x0, y1 - y0
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    bar = 0.05
+    part.quad((x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z), region="wood_dark", tint=MAHOGANY_DARK, uv=(0, 0, 1, 0.5))
+    for box_center, box_size in (
+        ((cx, y1 - bar / 2, z + 0.012), (w, bar, 0.024)),
+        ((cx, y0 + bar / 2, z + 0.012), (w, bar, 0.024)),
+        ((x0 + bar / 2, cy, z + 0.012), (bar, h - bar * 2, 0.024)),
+        ((x1 - bar / 2, cy, z + 0.012), (bar, h - bar * 2, 0.024)),
+    ):
+        part.box(box_center, box_size, region="wood_dark", tint=MAHOGANY)
+    # Filete interior y medallón en rombo.
+    inset = 0.1
+    for box_center, box_size in (
+        ((cx, y1 - inset, z + 0.006), (w - inset * 2, 0.014, 0.012)),
+        ((cx, y0 + inset, z + 0.006), (w - inset * 2, 0.014, 0.012)),
+        ((x0 + inset, cy, z + 0.006), (0.014, h - inset * 2, 0.012)),
+        ((x1 - inset, cy, z + 0.006), (0.014, h - inset * 2, 0.012)),
+    ):
+        part.box(box_center, box_size, tint=MAHOGANY)
+    rx, ry = min(w * 0.17, 0.2), min(h * 0.26, 0.2)
+    depth = z + 0.022
+    for scale, tint in ((1.0, MAHOGANY), (0.74, MAHOGANY_DARK), (0.46, MAHOGANY), (0.2, srgb(0xc98a4c))):
+        d = depth + (1 - scale) * 0.02
+        steps = 14
+        ring = [(cx + rx * scale * math.cos(2 * math.pi * i / steps), cy + ry * scale * math.sin(2 * math.pi * i / steps)) for i in range(steps)]
+        for i in range(steps):
+            ax, ay = ring[i]
+            bx, by = ring[(i + 1) % steps]
+            part.face(((cx, cy, d + 0.008), (ax, ay, d), (bx, by, d)), "white", ((0, 0), (1, 0), (1, 1)), tint, (0, 0, 1))
+
+
+def glass(part, x, y, z, tall=False):
+    height = 0.2 if tall else 0.11
+    if tall:
+        profile = [(0.032, 0), (0.008, 0.012), (0.007, 0.1), (0.034, 0.14), (0.036, 0.2)]
+    else:
+        profile = [(0.032, 0), (0.04, height)]
+    part.lathe((x, y, z), profile, segments=6, tint=GLASSWARE)
+
+
+def stack(part, x, y, z, count=5, radius=0.07, tint=CREAM_WARE):
+    profile = []
+    for i in range(count):
+        base = i * 0.03
+        profile += [(radius * 0.72, base), (radius, base + 0.028)]
+    part.lathe((x, y, z), profile, segments=8, tint=tint)
+
+
+def fill_row(part, x0, x1, y, z, kind):
+    x = x0 + 0.05
+    while x < x1 - 0.04:
+        if kind == "wine":
+            bottle(part, x, y, z, random.uniform(0.3, 0.38))
+            x += random.uniform(0.098, 0.125)
+        elif kind == "turquoise":
+            r = 0.04
+            h = random.uniform(0.3, 0.34)
+            part.lathe((x, y, z), [(r, 0), (r, h * 0.66), (r * 0.42, h * 0.84), (r * 0.36, h), (0, h)], segments=6, tint=TURQUOISE)
+            x += 0.1
+        elif kind == "glasses":
+            glass(part, x, y, z, tall=True)
+            x += 0.09
+        elif kind == "mixed":
+            if random.random() < 0.34:
+                stack(part, x + 0.03, y, z)
+                x += 0.17
+            else:
+                glass(part, x, y, z)
+                x += 0.085
+
+
+def arch_ring(a, b, cy, steps, start=0.0, end=math.pi):
+    return [(a * math.cos(start + (end - start) * i / steps), cy + b * math.sin(start + (end - start) * i / steps)) for i in range(steps + 1)]
+
+
+def build_back_bar(room):
+    """Mueble antiguo de bar, modelado a partir del diseño generado en Meshy. Devuelve el z del mostrador."""
+    back = Z_MIN + 0.06
+    shelf_front = back + 0.34
+    face = shelf_front + 0.05
+    half = 3.08
+    top_shelf = 2.56
+
+    # Mueble bajo y fondo espejado.
+    room.box((0, 0.54, back + 0.17), (half * 2, 1.08, 0.34), region="wood_dark", tint=MAHOGANY_DARK)
+    room.patch((-half, 1.08, back), (half * 2, 0, 0), (0, top_shelf - 1.08, 0), 6, 2, "mirror", repeat=(2, 1), tint=(0.2, 0.15, 0.11), normal=(0, 0, 1))
+
+    bays = ((-2.97, -1.11, "outer"), (-0.95, 0.95, "center"), (1.11, 2.97, "outer"))
+    levels = (1.1, 1.58, 2.06)
+    for x0, x1, kind in bays:
+        for index, level in enumerate(levels):
+            room.box(((x0 + x1) / 2, level - 0.015, back + 0.17), (x1 - x0, 0.03, 0.34), region="wood_dark", tint=MAHOGANY)
+            room.box(((x0 + x1) / 2, level - 0.045, shelf_front - 0.01), (x1 - x0, 0.03, 0.02), region="wood_dark", tint=MAHOGANY_DARK)
+            row = {0: "mixed", 1: "wine", 2: "turquoise" if kind == "outer" else "wine"}[index]
+            if kind == "center" and index == 0:
+                row = "glasses"
+            fill_row(room, x0, x1, level, back + 0.17, row)
+        # Arco de cada cuerpo: la madera baja en curva sobre los estantes.
+        steps = 10
+        cx, a = (x0 + x1) / 2, (x1 - x0) / 2
+        spring, b = top_shelf - 0.16, 0.16
+        for i in range(steps):
+            t0, t1 = math.pi * i / steps, math.pi * (i + 1) / steps
+            ax, ay = cx + a * math.cos(t0), spring + b * math.sin(t0)
+            bx, by = cx + a * math.cos(t1), spring + b * math.sin(t1)
+            room.face(((ax, ay, face), (ax, top_shelf + 0.02, face), (bx, top_shelf + 0.02, face), (bx, by, face)), "wood_dark", ((0, 1), (0, 0), (1, 0), (1, 1)), MAHOGANY, (0, 0, 1))
+
+    # Columnas: las de afuera más altas, con remate torneado.
+    for x, width, tall in ((-3.06, 0.2, True), (-1.03, 0.14, False), (1.03, 0.14, False), (3.06, 0.2, True)):
+        top = 2.96 if tall else top_shelf + 0.04
+        height = top - 1.08
+        cy = 1.08 + height / 2
+        room.box((x, cy, back + 0.2), (width, height, 0.4), region="wood_dark", tint=MAHOGANY_DARK)
+        room.box((x, cy, face + 0.012), (width * 0.62, height - 0.16, 0.024), region="wood", tint=MAHOGANY)
+        room.box((x, cy, face + 0.03), (width * 0.24, height - 0.42, 0.012), region="wood_dark", tint=MAHOGANY_DARK)
+        for y, grow in ((1.12, 1.25), (top - 0.03, 1.32), (top - 0.09, 1.14)):
+            room.box((x, y, back + 0.21), (width * grow, 0.05, 0.42), region="wood_dark", tint=MAHOGANY)
+        if tall:
+            room.lathe((x, top, back + 0.22), [(0.1, 0), (0.07, 0.03), (0.035, 0.06), (0.06, 0.11), (0.05, 0.17), (0.014, 0.25), (0, 0.27)], segments=8, region="wood_dark", tint=MAHOGANY)
+
+    # Viga sobre los estantes.
+    room.box((0, top_shelf + 0.05, back + 0.2), (half * 2 - 0.2, 0.09, 0.42), region="wood", tint=MAHOGANY)
+    room.box((0, top_shelf + 0.11, back + 0.21), (half * 2 - 0.16, 0.04, 0.44), region="wood_dark", tint=MAHOGANY_DARK)
+
+    # Arco de vitral con el medallón del café.
+    glass_a, glass_b, spring = 2.84, 0.68, top_shelf + 0.12
+    steps = 28
+    arc = arch_ring(glass_a, glass_b, spring, steps)
+    glass_z = back + 0.3
+    uv = lambda x, y: ((x + glass_a) / (2 * glass_a), 1 - (y - spring) / glass_b)
+    for i in range(steps):
+        x0, y0 = arc[i]
+        x1, y1 = arc[i + 1]
+        room.face(((x0, y0, glass_z), (x1, y1, glass_z), (x1, spring, glass_z), (x0, spring, glass_z)), "arch_glass", (uv(x0, y0), uv(x1, y1), uv(x1, spring), uv(x0, spring)), (1.05, 1.05, 1.0), (0, 0, 1), glow=True)
+    outer = arch_ring(glass_a + 0.13, glass_b + 0.12, spring, steps)
+    for i in range(steps):
+        p0, p1, q1, q0 = arc[i], arc[i + 1], outer[i + 1], outer[i]
+        ny = math.sin(math.pi * (i + 0.5) / steps)
+        room.face(((p0[0], p0[1], glass_z + 0.04), (p1[0], p1[1], glass_z + 0.04), (q1[0], q1[1], glass_z + 0.07), (q0[0], q0[1], glass_z + 0.07)), "wood", ((0, 1), (1, 1), (1, 0), (0, 0)), MAHOGANY, (0, 0.4 * ny, 0.9))
+        room.face(((q0[0], q0[1], glass_z + 0.07), (q1[0], q1[1], glass_z + 0.07), (q1[0], q1[1], glass_z - 0.2), (q0[0], q0[1], glass_z - 0.2)), "wood_dark", ((0, 1), (1, 1), (1, 0), (0, 0)), MAHOGANY_DARK, (0, ny, 0.3))
+
+    # Medallón central y remate tallado.
+    mx, my, ma, mb = 0.0, spring + 0.31, 0.36, 0.28
+    medal_z = glass_z + 0.05
+    ring_steps = 18
+    medal = arch_ring(ma, mb, my, ring_steps, 0, 2 * math.pi)
+    medal_uv = lambda x, y: (x / (2 * ma) + 0.5, 0.5 - (y - my) / (2 * mb))
+    for i in range(ring_steps):
+        x0, y0 = medal[i]
+        x1, y1 = medal[i + 1]
+        room.face(((0, my, medal_z), (x0, y0, medal_z), (x1, y1, medal_z)), "medallion", ((0.5, 0.5), medal_uv(x0, y0), medal_uv(x1, y1)), (1, 1, 1), (0, 0, 1), glow=True)
+    crest_y = spring + glass_b + 0.08
+    room.face(((-0.34, crest_y, glass_z + 0.08), (0.34, crest_y, glass_z + 0.08), (0.12, crest_y + 0.17, glass_z + 0.05), (-0.12, crest_y + 0.17, glass_z + 0.05)), "wood", ((0, 1), (1, 1), (0.7, 0), (0.3, 0)), MAHOGANY, (0, 0.3, 0.95))
+    room.lathe((0, crest_y + 0.13, glass_z + 0.02), [(0.06, 0), (0.04, 0.04), (0.012, 0.08), (0, 0.09)], segments=6, region="wood_dark", tint=MAHOGANY)
+
+    # Cuadros a los costados del mueble.
+    for x0, x1, region in ((-3.52, -3.18, "portrait"), (3.18, 3.52, "landscape")):
+        cz = Z_MIN + 0.05
+        room.quad((x0, 1.42, cz), (x1, 1.42, cz), (x1, 2.08, cz), (x0, 2.08, cz), region="wood_dark", tint=WOOD_BLACK)
+        room.quad((x0 + 0.03, 1.46, cz + 0.008), (x1 - 0.03, 1.46, cz + 0.008), (x1 - 0.03, 2.04, cz + 0.008), (x0 + 0.03, 2.04, cz + 0.008), region=region)
+
+    # Mostrador con las puntas redondeadas.
+    counter_z = -2.56
+    plan = rounded_plan(0, counter_z, 2.96, 0.36, 0.34)
+    extrude(room, rounded_plan(0, counter_z, 3.0, 0.4, 0.36), 0.0, 0.12, region="wood_dark", tint=MAHOGANY_DARK)
+    extrude(room, plan, 0.12, 0.9, region="wood_dark", tint=MAHOGANY_DARK)
+    extrude(room, plan, 0.9, 0.97, region="wood", tint=MAHOGANY, flare=0.02)
+    slab = rounded_plan(0, counter_z, 3.06, 0.42, 0.38)
+    extrude(room, slab, 0.97, 1.04, region="wood_dark", tint=MAHOGANY)
+    cap(room, slab, 1.04, region="plaster", tint=STONE)
+
+    front = counter_z + 0.36
+    panel_top, panel_bottom = 0.84, 0.18
+    for x0, x1 in ((-2.44, -0.94), (-0.8, 0.8), (0.94, 2.44)):
+        carved_panel(room, x0, x1, panel_bottom, panel_top, front + 0.002)
+    for x in (-2.62, -0.87, 0.87, 2.62):
+        room.box((x, 0.51, front + 0.016), (0.13, 0.78, 0.032), region="wood", tint=MAHOGANY)
+        room.box((x, 0.51, front + 0.036), (0.05, 0.56, 0.012), region="wood_dark", tint=MAHOGANY_DARK)
+        room.box((x, 0.87, front + 0.024), (0.16, 0.04, 0.048), region="wood_dark", tint=MAHOGANY)
+
+    # Barra de bronce para el pie, con sus soportes.
+    rail_y, rail_z = 0.15, front + 0.13
+    rail_end_z = counter_z - 0.1
+    points = [(-3.1, rail_end_z, -3.1 + 0.0), (-3.1, rail_z - 0.16, 0), (-2.98, rail_z - 0.04, 0), (-2.86, rail_z, 0), (2.86, rail_z, 0), (2.98, rail_z - 0.04, 0), (3.1, rail_z - 0.16, 0), (3.1, rail_end_z, 0)]
+    bright = (0.95, 0.68, 0.28)
+    for i in range(len(points) - 1):
+        ax, az, _ = points[i]
+        bx, bz, _ = points[i + 1]
+        limb(room, (ax, rail_y, az), (bx, rail_y, bz), 0.024, 0.024, bright, segments=6)
+    for x in (-2.7, -1.35, 0.0, 1.35, 2.7):
+        room.lathe((x, 0, rail_z), [(0.05, 0), (0.038, 0.012), (0.016, 0.03), (0.018, rail_y - 0.02), (0.03, rail_y)], segments=6, tint=bright)
+        limb(room, (x, rail_y, rail_z), (x, rail_y, front), 0.012, 0.012, bright, segments=4)
+
+    # Sobre el mostrador: tirador de cerveza, platos y caja antigua.
+    top = 1.04
+    tap_x = 1.92
+    room.lathe((tap_x, top, counter_z - 0.05), [(0.06, 0), (0.045, 0.02), (0.03, 0.05), (0.03, 0.32), (0.05, 0.36), (0.03, 0.4), (0, 0.41)], segments=8, tint=bright)
+    limb(room, (tap_x, top + 0.34, counter_z - 0.05), (tap_x, top + 0.34, counter_z + 0.1), 0.016, 0.012, bright, segments=5)
+    limb(room, (tap_x, top + 0.38, counter_z - 0.05), (tap_x, top + 0.56, counter_z - 0.05), 0.014, 0.02, srgb(0x2a1a10), segments=5)
+    stack(room, tap_x + 0.32, top, counter_z + 0.02, count=6, radius=0.095)
+    register_x = -2.15
+    room.box((register_x, top + 0.09, counter_z - 0.06), (0.3, 0.18, 0.22), tint=srgb(0xa87c34))
+    room.box((register_x, top + 0.22, counter_z - 0.08), (0.24, 0.1, 0.16), tint=srgb(0x8a6226))
+    room.quad((register_x - 0.1, top + 0.18, counter_z + 0.052), (register_x + 0.1, top + 0.18, counter_z + 0.052), (register_x + 0.1, top + 0.26, counter_z + 0.0), (register_x - 0.1, top + 0.26, counter_z + 0.0), tint=srgb(0xe8dcb8))
+    siphon(room, 0.15, top, counter_z - 0.06, TURQUOISE)
+    return counter_z
+
+
 def build_room():
     room = Part("boliche")
     width, depth = X_MAX - X_MIN, Z_MAX - Z_MIN
@@ -309,50 +580,7 @@ def build_room():
     # Pared de atrás: casi no se ve, se resuelve con madera y yeso.
     room.patch((X_MIN, 0, Z_MAX), (width, 0, 0), (0, HEIGHT, 0), nx, 4, "plaster", tint=srgb(0x7a5a3e), normal=(0, 0, -1))
 
-    # Estantería de la barra: el fondo de la escena.
-    shelf_z = Z_MIN + 0.32
-    room.box((0, 0.5, Z_MIN + 0.2), (6.6, 1.0, 0.38), region="wood_dark", tint=WOOD_RED)
-    bay_count = 6
-    bay_width = 6.3 / bay_count
-    room.patch((-3.2, 1.0, Z_MIN + 0.03), (6.4, 0, 0), (0, 1.55, 0), 6, 2, "mirror", repeat=(2, 1), tint=(0.55, 0.5, 0.42), normal=(0, 0, 1))
-    for level in (1.02, 1.5, 2.0):
-        room.box((0, level, shelf_z - 0.08), (6.4, 0.04, 0.34), region="wood_dark", tint=WOOD_RED)
-        for bay in range(bay_count * 5):
-            x = -3.05 + (bay + random.random() * 0.3) * (6.1 / (bay_count * 5))
-            if random.random() < 0.9:
-                bottle(room, x, level + 0.02, shelf_z - 0.1)
-    for i in range(bay_count + 1):
-        x = -3.15 + i * bay_width
-        room.box((x, 1.8, shelf_z + 0.06), (0.1, 1.6, 0.14), region="wood_dark", tint=WOOD_BLACK)
-    room.box((0, 2.58, shelf_z + 0.06), (6.5, 0.12, 0.2), region="wood", tint=WOOD_RED)
-
-    # Vitrales a los costados, cartel fileteado en el centro y remate tallado.
-    front = shelf_z + 0.17
-    for x0, x1 in ((-3.25, -1.2), (1.2, 3.25)):
-        room.quad((x0, 2.64, front), (x1, 2.64, front), (x1, 3.18, front), (x0, 3.18, front), region="stained", tint=(1.25, 1.25, 1.1), glow=True)
-        room.box(((x0 + x1) / 2, 3.2, front - 0.04), (x1 - x0 + 0.1, 0.07, 0.12), region="wood", tint=WOOD_RED)
-    room.quad((-1.12, 2.56, front + 0.03), (1.12, 2.56, front + 0.03), (1.12, 3.4, front + 0.03), (-1.12, 3.4, front + 0.03), region="sign_main", glow=True, tint=(0.92, 0.9, 0.82))
-    room.box((0, 2.98, front - 0.02), (2.36, 0.96, 0.05), region="wood_dark", tint=WOOD_BLACK)
-
-    # Mostrador con frente en paneles y tapa gastada.
-    counter_z = -2.55
-    room.box((0, 1.04, counter_z), (6.2, 0.05, 0.72), region="wood", tint=(1.1, 1.0, 0.92))
-    room.box((0, 0.5, counter_z), (6.0, 1.0, 0.58), region="wood_dark", tint=WOOD_RED)
-    for i in range(9):
-        x = -2.68 + i * 0.67
-        room.quad((x - 0.27, 0.16, counter_z + 0.296), (x + 0.27, 0.16, counter_z + 0.296), (x + 0.27, 0.86, counter_z + 0.296), (x - 0.27, 0.86, counter_z + 0.296), region="wood", tint=WOOD_BLACK)
-    room.box((0, 0.08, counter_z + 0.34), (6.0, 0.03, 0.03), tint=BRASS)
-
-    # Sobre el mostrador: sifones, cafetera, panera con campana y botellas.
-    for i, color in enumerate((srgb(0xc8352a), srgb(0x2a7ac0), srgb(0xc8352a), srgb(0x3f8a5a))):
-        siphon(room, 1.55 + i * 0.17, 1.065, counter_z + 0.1 - (i % 2) * 0.1, color)
-    room.lathe((-1.7, 1.065, counter_z), [(0.16, 0), (0.16, 0.08), (0.11, 0.1), (0.11, 0.46), (0.08, 0.5), (0.03, 0.56), (0, 0.56)], segments=10, tint=srgb(0xb9b5a4))
-    for side in (-1, 1):
-        room.box((-1.7 + side * 0.15, 1.3, counter_z), (0.06, 0.03, 0.03), tint=BRASS)
-    room.lathe((0.5, 1.065, counter_z), [(0.2, 0), (0.2, 0.02), (0.17, 0.05), (0.17, 0.2), (0.1, 0.28), (0.02, 0.3), (0, 0.3)], segments=10, tint=srgb(0xdedad0))
-    room.lathe((0.5, 1.09, counter_z), [(0.1, 0), (0.12, 0.04), (0.1, 0.09), (0, 0.1)], segments=8, tint=srgb(0xb88a4c))
-    for x in (-0.6, -0.42, 2.55):
-        bottle(room, x, 1.065, counter_z - 0.05, 0.32)
+    counter_z = build_back_bar(room)
 
     # Banquetas de barra.
     for x in (-2.4, -1.25, 1.1, 2.3):
@@ -365,13 +593,10 @@ def build_room():
             thonet(room, x + math.sin(angle) * 0.62, z + math.cos(angle) * 0.62, angle + math.pi)
         room.lathe((x + 0.1, 0.75, z), [(0.03, 0), (0.03, 0.2), (0.012, 0.28), (0, 0.28)], segments=6, tint=random.choice(GLASS_COLORS))
 
-    # Lámparas: la de la mesa, las de la barra y un globo.
+    # Lámparas: la de la mesa y un globo.
     room.box((0, 3.2, 0), (0.015, 0.8, 0.015), tint=WOOD_BLACK)
     room.lathe((0, 2.55, 0), [(0.28, 0), (0.26, 0.04), (0.13, 0.22), (0.05, 0.28), (0, 0.29)], segments=14, tint=srgb(0x2f6b4e))
     room.lathe((0, 2.55, 0), [(0, 0.0), (0.26, 0.0)], segments=14, tint=srgb(0xffe3a8), glow=True)
-    for x in (-2.1, 2.1):
-        room.box((x, 3.2, -2.1), (0.015, 0.8, 0.015), tint=WOOD_BLACK)
-        room.lathe((x, 2.56, -2.1), [(0.26, 0), (0.2, 0.06), (0.06, 0.24), (0, 0.26)], segments=10, tint=srgb(0xd4a85a), glow=True)
     room.box((0, 3.4, 2.8), (0.015, 0.4, 0.015), tint=WOOD_BLACK)
     room.lathe((0, 2.92, 2.8), [(0, 0), (0.16, 0.04), (0.22, 0.18), (0.16, 0.32), (0, 0.36)], segments=10, tint=srgb(0xfff0c8), glow=True)
 

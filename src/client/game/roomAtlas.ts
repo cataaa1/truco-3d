@@ -340,19 +340,97 @@ function signFrame(ctx: Ctx, w: number, h: number, ground: string, band: string,
   ctx.strokeRect(24, 24, w - 48, h - 48);
 }
 
-function drawMainSign(ctx: Ctx, w: number, h: number): void {
-  const { black, sky, gold, cream, red } = FILETE;
-  signFrame(ctx, w, h, black, sky, gold);
-  for (const flip of [1, -1]) {
-    const x = flip === 1 ? 60 : w - 60;
-    scroll(ctx, x, 92, 130, flip, gold, red);
-    scroll(ctx, x, h - 72, 130, flip, sky, '#1c5a7c');
+/** Vitral del arco: cielo, ciudad con el Obelisco y marco de hojas, dividido por varillas de plomo. */
+function drawArchGlass(ctx: Ctx, w: number, h: number): void {
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, '#2f7fb8');
+  sky.addColorStop(0.55, '#a8d4e0');
+  sky.addColorStop(1, '#f2deaa');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, w, h);
+  const ground = h * 0.82;
+  const random = seeded(29);
+  ctx.fillStyle = '#6d6a78';
+  for (let x = 0; x < w; ) {
+    const bw = 28 + random() * 56;
+    const bh = 42 + random() * 86;
+    ctx.fillStyle = ['#7b7686', '#8d8373', '#5f6b80', '#a08a6e'][Math.floor(random() * 4)]!;
+    ctx.fillRect(x, ground - bh, bw, bh);
+    ctx.fillStyle = '#f2d98a';
+    for (let wy = ground - bh + 10; wy < ground - 8; wy += 17) {
+      for (let wx = x + 7; wx < x + bw - 6; wx += 13) ctx.fillRect(wx, wy, 5, 7);
+    }
+    if (random() < 0.34) {
+      ctx.fillStyle = '#5b8f8a';
+      ctx.beginPath();
+      ctx.arc(x + bw / 2, ground - bh, bw * 0.34, Math.PI, 0);
+      ctx.fill();
+    }
+    x += bw + 2;
   }
-  lettering(ctx, 'BOLICHE', w / 2, 76, 58, cream, red, black, 520);
-  lettering(ctx, 'TRUCO', w / 2, 192, 138, cream, sky, black, 660);
-  lettering(ctx, 'truco, grapa y señas', w / 2, 306, 42, gold, red, black, 640);
-  flower(ctx, 196, h / 2 + 2, 28, cream, gold);
-  flower(ctx, w - 196, h / 2 + 2, 28, cream, gold);
+  // Obelisco a los dos lados del medallón.
+  for (const cx of [w * 0.27, w * 0.73]) {
+    ctx.fillStyle = '#efe8d6';
+    ctx.beginPath();
+    ctx.moveTo(cx - 13, ground);
+    ctx.lineTo(cx - 7, ground * 0.27);
+    ctx.lineTo(cx, ground * 0.2);
+    ctx.lineTo(cx + 7, ground * 0.27);
+    ctx.lineTo(cx + 13, ground);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.fillStyle = '#3f7d3e';
+  ctx.fillRect(0, ground, w, h - ground);
+  // Guirnalda de hojas siguiendo el arco, y cuentas doradas abajo.
+  for (let i = 0; i <= 44; i++) {
+    const t = i / 44;
+    const angle = Math.PI * (1 - t);
+    const x = w / 2 + Math.cos(angle) * w * 0.46;
+    const y = h - Math.sin(angle) * h * 0.86 - 10;
+    ctx.fillStyle = i % 3 === 0 ? '#2f8a4e' : i % 3 === 1 ? '#57b06a' : '#1f6b45';
+    ctx.beginPath();
+    ctx.ellipse(x, y, 24, 11, angle + Math.PI / 2 + (i % 2 ? 0.5 : -0.5), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  for (let i = 0; i < 26; i++) {
+    ctx.fillStyle = i % 2 ? '#d9a93f' : '#c8352a';
+    ctx.beginPath();
+    ctx.arc(((i + 0.5) / 26) * w, h - 17, 10, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Varillas de plomo.
+  ctx.strokeStyle = 'rgba(16, 12, 8, 0.82)';
+  ctx.lineWidth = 3.5;
+  for (let i = 1; i < 18; i++) {
+    const x = (i / 18) * w;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(w / 2 + (x - w / 2) * 1.04, h);
+    ctx.stroke();
+  }
+  for (let j = 1; j < 7; j++) {
+    ctx.beginPath();
+    ctx.moveTo(0, (j / 7) * h);
+    ctx.lineTo(w, (j / 7) * h);
+    ctx.stroke();
+  }
+}
+
+function drawMedallion(ctx: Ctx, w: number, h: number): void {
+  const { black, cream, red, gold } = FILETE;
+  ctx.fillStyle = gold;
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = black;
+  ctx.beginPath();
+  ctx.ellipse(w / 2, h / 2, w / 2 - 8, h / 2 - 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = cream;
+  ctx.beginPath();
+  ctx.ellipse(w / 2, h / 2, w / 2 - 16, h / 2 - 16, 0, 0, Math.PI * 2);
+  ctx.fill();
+  lettering(ctx, 'CAFÉ', w / 2, h * 0.34, 60, red, gold, black, w * 0.78);
+  lettering(ctx, 'BAR', w / 2, h * 0.66, 66, red, gold, black, w * 0.72);
 }
 
 function drawRedSign(ctx: Ctx, w: number, h: number): void {
@@ -432,7 +510,8 @@ export function buildRoomAtlas(): HTMLCanvasElement {
   within(ctx, 'clock', (w) => drawClock(ctx, w));
   within(ctx, 'labels', (w) => drawLabels(ctx, w));
   within(ctx, 'stained', (w, h) => drawStained(ctx, w, h));
-  within(ctx, 'sign_main', (w, h) => drawMainSign(ctx, w, h));
+  within(ctx, 'arch_glass', (w, h) => drawArchGlass(ctx, w, h));
+  within(ctx, 'medallion', (w, h) => drawMedallion(ctx, w, h));
   within(ctx, 'sign_red', (w, h) => drawRedSign(ctx, w, h));
   within(ctx, 'sign_small', (w, h) => drawSmallSign(ctx, w, h));
   within(ctx, 'glass_bar', (w, h) => drawGlass(ctx, w, h, 'BAR', FILETE.red));
