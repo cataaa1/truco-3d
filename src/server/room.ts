@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { botAction } from '../engine/bot';
+import { botAction, botSena } from '../engine/bot';
 import {
   applyAction,
   createGame,
@@ -84,6 +84,9 @@ export class Room extends DurableObject<Env> {
   private senas: ActiveSena[] = [];
   private lastSena: number[] = [];
   private lastPhrase: number[] = [];
+  private botSenasDone = new Map<number, Set<SenaId>>();
+  // Equipos cuyo bot vio la seña de envido de su compañero en esta mano.
+  private envidoHints = new Set<number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -223,6 +226,37 @@ export class Room extends DurableObject<Env> {
     const now = Date.now();
     this.senas = this.senas.filter((sena) => sena.until > now);
     for (const sena of this.senas) this.reveal(sena, seat, now);
+    this.tryBotSenas(now);
+  }
+
+  /** Igual que una persona: el bot espera a que su compañero lo mire y a que ningún rival lo esté mirando. */
+  private tryBotSenas(now: number): void {
+    const data = this.data!;
+    const game = data.game;
+    if (!game || data.status !== 'playing' || game.phase !== 'playing' || data.players === 2) return;
+    const humans = data.seats.flatMap((s, i) => (s && !s.bot && s.connected ? [i] : []));
+    const sees = (observer: number, target: number) => {
+      const { y, p } = this.gaze[observer]!;
+      return canSee(observer, target, data.players, y, p);
+    };
+    for (let seat = 0; seat < data.players; seat++) {
+      if (!data.seats[seat]?.bot || now - this.lastSena[seat]! < SENA_MS + 800) continue;
+      const partner = humans.find((h) => teamOf(h) === teamOf(seat) && sees(h, seat));
+      if (partner === undefined || humans.some((h) => teamOf(h) !== teamOf(seat) && sees(h, seat))) continue;
+      const done = this.botSenasDone.get(seat) ?? new Set<SenaId>();
+      const id = botSena(game, seat, done);
+      if (!id) continue;
+      done.add(id);
+      this.botSenasDone.set(seat, done);
+      this.lastSena[seat] = now;
+      // Mira a su compañero mientras hace el gesto; los demás pueden notar hacia dónde mira.
+      const y = Math.round(bearingTo(seat, partner, data.players) * 100) / 100;
+      this.gaze[seat] = { y, p: 0 };
+      this.send(undefined, { t: 'gaze', s: seat, y, p: 0 });
+      const sena: ActiveSena = { seat, id, until: now + SENA_MS, seen: new Set() };
+      this.senas.push(sena);
+      for (let observer = 0; observer < data.players; observer++) this.reveal(sena, observer, now);
+    }
   }
 
   private onSena(seat: number, id: unknown): void {
@@ -234,6 +268,17 @@ export class Room extends DurableObject<Env> {
     const sena: ActiveSena = { seat, id, until: now + SENA_MS, seen: new Set() };
     this.senas.push(sena);
     for (let observer = 0; observer < data.players; observer++) this.reveal(sena, observer, now);
+    if (id === 'envido') this.noteEnvidoHint(seat);
+  }
+
+  /** La seña va dirigida: el bot la toma si quien la hace lo está mirando. */
+  private noteEnvidoHint(seat: number): void {
+    const data = this.data!;
+    const { y, p } = this.gaze[seat]!;
+    for (let bot = 0; bot < data.players; bot++) {
+      if (!data.seats[bot]?.bot || bot === seat || teamOf(bot) !== teamOf(seat)) continue;
+      if (canSee(seat, bot, data.players, y, p)) this.envidoHints.add(teamOf(seat));
+    }
   }
 
   private reveal(sena: ActiveSena, observer: number, now: number): void {
@@ -318,6 +363,10 @@ export class Room extends DurableObject<Env> {
     const events = game.events;
     game.events = [];
     const now = Date.now();
+    if (events.some((event) => event.e === 'deal')) {
+      this.botSenasDone.clear();
+      this.envidoHints.clear();
+    }
 
     data.deadline = game.phase === 'playing' ? now + TURN_MS : null;
     data.nextHandDue = game.phase === 'handOver' ? now + NEXT_HAND_MS : null;
@@ -382,7 +431,10 @@ export class Room extends DurableObject<Env> {
       }
       if (game.phase === 'playing' && data.botDue !== null && now >= data.botDue) {
         const seat = this.botToAct();
-        const action = seat === null ? null : botAction(game, seat);
+        const action =
+          seat === null
+            ? null
+            : botAction(game, seat, Math.random, { partnerHasEnvido: this.envidoHints.has(teamOf(seat)) });
         if (seat !== null && action && applyAction(game, seat, action)) {
           await this.afterGameChange();
           return;

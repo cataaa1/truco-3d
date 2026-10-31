@@ -1,8 +1,19 @@
-import { envidoPoints, strength, type CardId } from './cards';
+import { cardRank, cardSuit, envidoPoints, strength, type CardId } from './cards';
+import type { SenaId } from '../shared/protocol';
 import { legalActions, teamOf, type Action, type GameState } from './game';
 
-/** Decide usando solo la información que tendría ese jugador: sus cartas y lo que está en la mesa. */
-export function botAction(state: GameState, seat: number, random: () => number = Math.random): Action | null {
+/** Lo que el bot sabe por las señas de su compañero. */
+export interface BotHints {
+  partnerHasEnvido?: boolean;
+}
+
+/** Decide usando solo la información que tendría ese jugador: sus cartas, la mesa y las señas que vio. */
+export function botAction(
+  state: GameState,
+  seat: number,
+  random: () => number = Math.random,
+  hints: BotHints = {},
+): Action | null {
   const legal = legalActions(state, seat);
   if (legal.length === 0) return null;
   const { hand } = state;
@@ -20,11 +31,11 @@ export function botAction(state: GameState, seat: number, random: () => number =
   if (hand.envidoPending) {
     if (tantos >= 32) return envidoCall('falta') ?? { t: 'quiero' };
     if (tantos >= 30) return envidoCall('real') ?? { t: 'quiero' };
-    return tantos >= 26 || random() < 0.1 ? { t: 'quiero' } : { t: 'noquiero' };
+    return hints.partnerHasEnvido || tantos >= 26 || random() < 0.1 ? { t: 'quiero' } : { t: 'noquiero' };
   }
 
   if (hand.trucoPending) {
-    if (tantos >= 28) {
+    if (hints.partnerHasEnvido || tantos >= 28) {
       const open = envidoCall('envido');
       if (open) return open;
     }
@@ -34,6 +45,10 @@ export function botAction(state: GameState, seat: number, random: () => number =
 
   if (hand.turn !== seat) return null;
 
+  if (hints.partnerHasEnvido) {
+    const open = envidoCall('envido');
+    if (open) return open;
+  }
   if (tantos >= 28 && random() < 0.8) {
     const open = envidoCall(tantos >= 31 ? 'real' : 'envido');
     if (open) return open;
@@ -42,6 +57,31 @@ export function botAction(state: GameState, seat: number, random: () => number =
 
   const card = chooseCard(state, seat, remaining);
   return card === undefined ? null : { t: 'play', card };
+}
+
+function senaForCard(card: CardId): SenaId {
+  const rank = cardRank(card);
+  const suit = cardSuit(card);
+  if (rank === 1 && suit === 'espada') return 'ancho_espada';
+  if (rank === 1 && suit === 'basto') return 'ancho_basto';
+  if (rank === 7 && suit === 'espada') return 'siete_espada';
+  if (rank === 7 && suit === 'oro') return 'siete_oro';
+  if (rank === 3) return 'tres';
+  if (rank === 2) return 'dos';
+  if (rank === 1) return 'ancho_falso';
+  return 'nada';
+}
+
+/** La próxima seña verdadera para el compañero: primero el envido y después la mejor carta. */
+export function botSena(state: GameState, seat: number, done: ReadonlySet<SenaId>): SenaId | null {
+  const { hand } = state;
+  const canUseEnvido = hand.roundWinners.length === 0 && !hand.envidoDone && !hand.florDone;
+  if (canUseEnvido && envidoPoints(hand.dealt[seat]!) >= 30 && !done.has('envido')) return 'envido';
+  const remaining = hand.cards[seat]!;
+  if (remaining.length === 0) return null;
+  const best = remaining.reduce((a, b) => (strength(b) > strength(a) ? b : a));
+  const sena = senaForCard(best);
+  return done.has(sena) ? null : sena;
 }
 
 function chooseCard(state: GameState, seat: number, cards: readonly CardId[]): CardId | undefined {

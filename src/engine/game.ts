@@ -25,7 +25,7 @@ export type GameEvent =
   | { e: 'deal'; dealer: number; mano: number }
   | { e: 'play'; seat: number; card: CardId }
   | { e: 'canto'; seat: number; canto: string }
-  | { e: 'answer'; seat: number; quiero: boolean }
+  | { e: 'answer'; seat: number; quiero: boolean; what: 'truco' | 'envido' | 'flor' }
   | { e: 'mazo'; seat: number }
   | { e: 'envido'; team: Team; seat: number; tantos: number; points: number }
   | { e: 'flor'; team: Team; points: number }
@@ -139,7 +139,15 @@ function nextEnvidoCalls(calls: readonly EnvidoCall[]): EnvidoCall[] {
   return calls.length >= 2 ? ['real', 'falta'] : ['envido', 'real', 'falta'];
 }
 
-function canOpenEnvido(hand: HandState, seat: number): boolean {
+/** De a 4 o 6 el envido lo abren solo los dos últimos de la ronda: los pies de cada equipo. */
+function isLastTwo(state: GameState, seat: number): boolean {
+  const { players } = state.config;
+  return players <= 2 || (seat - state.hand.mano + players) % players >= players - 2;
+}
+
+function canOpenEnvido(state: GameState, seat: number): boolean {
+  const { hand } = state;
+  if (!isLastTwo(state, seat)) return false;
   if (hand.roundWinners.length > 0 || hand.envidoDone || hand.florDone) return false;
   if (hand.trucoLevel > 0 || hand.envidoPending || hand.florPending) return false;
   if (hasPlayedFirst(hand, seat)) return false;
@@ -175,7 +183,7 @@ export function legalActions(state: GameState, seat: number): Action[] {
       for (const call of nextEnvidoCalls(hand.envidoPending.calls)) actions.push({ t: 'envido', call });
     } else if (hand.trucoPending) {
       if (hand.trucoPending.level < 3) actions.push({ t: 'truco' });
-      if (canOpenEnvido(hand, seat)) {
+      if (canOpenEnvido(state, seat)) {
         for (const call of nextEnvidoCalls([])) actions.push({ t: 'envido', call });
       }
     }
@@ -184,10 +192,11 @@ export function legalActions(state: GameState, seat: number): Action[] {
   }
   if (responding !== null) return actions;
 
-  if (canOpenEnvido(hand, seat)) {
+  if (canOpenEnvido(state, seat)) {
     for (const call of nextEnvidoCalls([])) actions.push({ t: 'envido', call });
   }
-  if (hand.trucoLevel < 3 && (hand.trucoHolder === null || hand.trucoHolder === team)) {
+  // El truco se canta solo en el turno propio. Responder subiendo se resuelve arriba.
+  if (hand.turn === seat && hand.trucoLevel < 3 && (hand.trucoHolder === null || hand.trucoHolder === team)) {
     actions.push({ t: 'truco' });
   }
   if (hand.turn === seat) {
@@ -321,7 +330,8 @@ function callEnvido(state: GameState, seat: number, call: EnvidoCall): void {
 
 function answer(state: GameState, seat: number, quiero: boolean): void {
   const { hand } = state;
-  state.events.push({ e: 'answer', seat, quiero });
+  const what = hand.florPending ? 'flor' : hand.envidoPending ? 'envido' : 'truco';
+  state.events.push({ e: 'answer', seat, quiero, what });
   if (hand.florPending) answerFlor(state, quiero);
   else if (hand.envidoPending) answerEnvido(state, quiero);
   else if (hand.trucoPending) answerTruco(state, quiero);
@@ -484,7 +494,6 @@ export interface PlayerView {
   mano: number;
   turn: number;
   myCards: CardId[];
-  myTantos: number;
   cardCounts: number[];
   rounds: Play[][];
   roundWinners: (Team | null)[];
@@ -519,7 +528,6 @@ export function viewFor(state: GameState, seat: number): PlayerView {
     mano: hand.mano,
     turn: hand.turn,
     myCards: hand.cards[seat]!,
-    myTantos: envidoPoints(hand.dealt[seat]!),
     cardCounts: hand.cards.map((cards) => cards.length),
     rounds: hand.rounds,
     roundWinners: hand.roundWinners,

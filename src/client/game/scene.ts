@@ -47,7 +47,7 @@ const FOV = 55;
 const PLAYED_W = 0.15;
 const PLAYED_H = 0.234;
 const PLAYED_SPACING = 0.158;
-const MAX_LEAN = 0.72;
+const PLAYED_PULL = 0.13;
 const FACE_SIZE = 0.3;
 const HEAD_SHAPE = { x: 0.165, y: 0.175, z: 0.165 };
 const TAG_HEIGHT = 0.36;
@@ -484,20 +484,17 @@ export class TableScene {
     // Mis cartas jugadas van más al centro: en el lugar de los demás las taparía mi propia mano.
     const spot = seat === this.me ? this.seatRadius - 1.12 : this.cardSpot;
     const spacing = PLAYED_SPACING * this.playedScale(seat);
+    // Apoyadas sobre la mesa, de frente a quien mira y un poco más cerca para que se lean.
+    const pull = seat === this.me ? 0 : PLAYED_PULL;
     const centerX = Math.sin(angle) * spot;
-    const centerZ = Math.cos(angle) * spot;
-    // Todas miran hacia quien juega, y las lejanas se levantan más: planas casi no se leen.
+    const centerZ = Math.cos(angle) * spot + pull;
     const dx = -centerX;
     const dz = this.seatRadius - centerZ;
     const distance = Math.hypot(dx, dz);
-    // Se reparten de costado respecto de la mirada: así no se pisan entre sí.
     const offset = (round - 1) * spacing;
     out.position.set(centerX + (offset * dz) / distance, TABLE_Y + 0.003 + round * 0.001, centerZ - (offset * dx) / distance);
-    const lean = Math.min(MAX_LEAN, Math.max(0, (distance - 0.72) * 0.72));
     out.rotation.order = 'YXZ';
-    out.rotation.set(-Math.PI / 2 + lean, Math.atan2(dx, dz), 0);
-    // Apoya en su borde inferior: si no, media carta quedaría debajo de la mesa.
-    out.position.y += ((PLAYED_H * this.playedScale(seat)) / 2) * Math.sin(lean);
+    out.rotation.set(-Math.PI / 2, Math.atan2(dx, dz), 0);
   }
 
   private putSprite(key: string, slot: number, placed: Object3D, scaleX: number, scaleY: number, from?: Object3D): void {

@@ -16,9 +16,10 @@ const STYLE = `
   .hud { position: absolute; pointer-events: none; }
   .hud button, .hud .panel { pointer-events: auto; }
   #overlay { inset: 0; }
-  .score { top: 12px; left: 12px; background: rgba(20,16,12,.92); border: 2px solid var(--gold); outline: 2px solid var(--sky); outline-offset: 2px; border-radius: 4px; padding: 8px 14px; min-width: 160px; }
-  .score b { font: 400 24px/1.1 var(--lettering); color: var(--cream); }
-  .score .us, .score .them { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+  .score { top: 12px; left: 12px; background: rgba(20,16,12,.92); border: 2px solid var(--gold); outline: 2px solid var(--sky); outline-offset: 2px; border-radius: 4px; padding: 8px 12px; min-width: 130px; }
+  .tally-head { display: flex; justify-content: space-between; gap: 14px; font-size: 13px; font-weight: 700; }
+  .tally-board { display: flex; justify-content: space-around; margin-top: 4px; }
+  .tally { display: block; }
   .score .us { color: var(--us); } .score .them { color: var(--them); }
   .status { top: 12px; left: 50%; transform: translateX(-50%); background: rgba(20,16,12,.92); border: 2px solid var(--gold); border-radius: 4px; padding: 8px 18px; text-align: center; min-width: 260px; max-width: 46vw; font-family: var(--lettering); color: var(--cream); text-shadow: 1px 1px 0 #000; }
   .timer { height: 4px; background: var(--gold); margin-top: 6px; border-radius: 2px; transform-origin: left; }
@@ -68,6 +69,34 @@ const ACTION_KEYS: Record<string, string> = {
 const SENS = 0.0022;
 const GAZE_INTERVAL_MS = 125;
 const GAZE_MIN_CHANGE = 0.017;
+
+/** Un palito de fósforo entre dos puntos, con la cabeza en el extremo final. */
+function stick(x1: number, y1: number, x2: number, y2: number): string {
+  return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#ecd9ae" stroke-width="2.6" stroke-linecap="round"/><circle cx="${x2}" cy="${y2}" r="2.3" fill="#b3261e"/>`;
+}
+
+/** Puntaje de truco: cuatro palitos forman el cuadrado y el quinto lo cruza. Las malas se separan de las buenas. */
+function tallySvg(points: number, target: number): string {
+  const box = 24;
+  const gap = 8;
+  const divider = 14;
+  const groups = target / 5;
+  const half = groups / 2;
+  let out = '';
+  let y = 4;
+  for (let group = 0; group < groups; group++) {
+    if (target === 30 && group === half) {
+      out += `<line x1="1" y1="${y + divider / 2 - gap / 2}" x2="35" y2="${y + divider / 2 - gap / 2}" stroke="#e3a93c" stroke-width="1.6"/>`;
+      y += divider;
+    }
+    const count = Math.max(0, Math.min(5, points - group * 5));
+    const [l, r, t, b] = [6, 6 + box, y, y + box];
+    const sides = [stick(l, t, r, t), stick(r, t, r, b), stick(r, b, l, b), stick(l, b, l, t), stick(l, b, r, t)];
+    out += sides.slice(0, count).join('');
+    y += box + gap;
+  }
+  return `<svg class="tally" viewBox="0 0 36 ${y}" width="36" height="${y}">${out}</svg>`;
+}
 
 function speak(text: string): void {
   // Voz provisoria del navegador, hasta tener grabaciones propias. No pesa nada.
@@ -146,9 +175,10 @@ export function mountGame(
         break;
       }
       case 'answer': {
-        const text = event.quiero ? '¡Quiero!' : 'No quiero';
+        const what = event.what === 'truco' ? 'el truco' : event.what === 'envido' ? 'el envido' : 'la flor';
+        const text = event.quiero ? `¡Quiero ${what}!` : `No quiero ${what}`;
         toast(`${nameOf(event.seat)}: ${text}`);
-        say(text);
+        say(event.quiero ? '¡Quiero!' : 'No quiero');
         break;
       }
       case 'mazo':
@@ -165,12 +195,15 @@ export function mountGame(
         if (event.winner === null) toast('Parda');
         break;
       case 'hand':
-        toast(`${event.points} ${event.points === 1 ? 'punto' : 'puntos'} para ${teamLabel(event.team)}`, 3200);
+        toast(`${handReason(event.reason)}${event.points} ${event.points === 1 ? 'punto' : 'puntos'} para ${teamLabel(event.team)}`, 3200);
         break;
       default:
         break;
     }
   }
+
+  const handReason = (reason: string) =>
+    reason === 'rejected' ? 'No quisieron el truco: se termina la mano. ' : reason === 'mazo' ? 'Se fueron al mazo. ' : '';
 
   const teamLabel = (team: number) => (team === teamOf(me) ? 'nosotros' : 'ellos');
 
@@ -383,10 +416,13 @@ export function mountGame(
   // ---- Interfaz de la partida ----
   function renderScore(v: PlayerView): void {
     const mine = teamOf(me);
+    const us = v.scores[mine];
+    const them = v.scores[mine === 0 ? 1 : 0];
     $('score').innerHTML = `
-      <div class="us">Nosotros <b>${v.scores[mine]}</b></div>
-      <div class="them">Ellos <b>${v.scores[mine === 0 ? 1 : 0]}</b></div>
-      <div class="muted">A ${v.config.target}${v.scores[0] > 15 || v.scores[1] > 15 ? ', en las buenas' : ''}</div>`;
+      <div class="tally-head"><span class="us">Nosotros</span><span class="them">Ellos</span></div>
+      <div class="tally-board" role="img" aria-label="Nosotros ${us}, ellos ${them}, a ${v.config.target} puntos">
+        ${tallySvg(us, v.config.target)}${tallySvg(them, v.config.target)}
+      </div>`;
   }
 
   function statusText(v: PlayerView): string {
@@ -429,7 +465,7 @@ export function mountGame(
     const tip = document.createElement('div');
     tip.className = 'tip';
     const cardsHelp = v.legal.some((a) => a.t === 'play') ? 'Clic en una carta o 1, 2, 3 para jugarla. ' : '';
-    tip.textContent = `${cardsHelp}Tenés ${v.myTantos} de envido.${teamGame ? ' Q + número: seña.' : ''} C + número: frase.`;
+    tip.textContent = `${cardsHelp}${teamGame ? 'Q + número: seña. ' : ''}C + número: frase.`;
     box.append(tip);
   }
 
@@ -470,6 +506,10 @@ export function mountGame(
         case 'game':
           view = message.view;
           for (const event of message.events) describe(event);
+          // El envido se resuelve primero, pero el truco cantado antes sigue esperando respuesta.
+          if (message.events.some((event) => event.e === 'envido') && view.pendingLabel && view.responding !== null) {
+            toast(`Sigue pendiente: ${CANTO_TEXT[view.pendingLabel] ?? view.pendingLabel}`, 3600);
+          }
           scene.setView(view);
           if (view.turn !== lastTurn) {
             lastTurn = view.turn;

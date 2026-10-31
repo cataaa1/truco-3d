@@ -9,7 +9,7 @@ export const SENAS = [
   { id: 'dos', card: 'Un 2', gesture: 'Tirar un beso' },
   { id: 'ancho_falso', card: 'Ancho falso', gesture: 'Abrir un poco la boca' },
   { id: 'nada', card: 'Nada que valga', gesture: 'Cerrar los ojos' },
-  { id: 'envido', card: '30 o más de envido', gesture: 'Fruncir la nariz' },
+  { id: 'envido', card: 'Tengo envido (30 o más)', gesture: 'Fruncir la nariz' },
 ] as const;
 
 export type SenaId = (typeof SENAS)[number]['id'];

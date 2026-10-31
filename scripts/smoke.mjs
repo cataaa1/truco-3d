@@ -141,6 +141,48 @@ while (solo.view?.phase !== 'gameOver' && Date.now() - started < 300_000) {
 }
 check(`la partida contra el bot termina (${moves} jugadas, ${solo.view?.scores})`, solo.view?.phase === 'gameOver');
 
+// --- Un bot compañero hace una seña cuando lo miran ---
+const code4 = await create(4);
+const human = await player(code4, 'Compa');
+await until(() => human.seat >= 0);
+human.send({ t: 'start', fill: true });
+await until(() => human.view);
+human.send({ t: 'gaze', y: 0, p: 0 });
+check('el bot compañero le hace una seña a quien lo mira', await until(() => human.inbox.some((m) => m.t === 'sena' && m.s === (human.seat + 2) % 4), 3000));
+human.inbox.length = 0;
+human.send({ t: 'gaze', y: 0.785, p: 0 });
+await sleep(150);
+human.send({ t: 'gaze', y: 0.01, p: -0.8 });
+await sleep(2200);
+check('sin mirarlo no llega ninguna seña', !human.inbox.some((m) => m.t === 'sena'));
+human.ws.close();
+
+// --- El bot canta envido cuando su compañero le hace la seña ---
+let sang = false;
+for (let attempt = 0; attempt < 12 && !sang; attempt++) {
+  const room4 = await create(4);
+  const me = await player(room4, 'Pide');
+  await until(() => me.seat >= 0);
+  me.send({ t: 'start', fill: true });
+  await until(() => me.view);
+  const partner = (me.seat + 2) % 4;
+  // Solo vale si el compañero es uno de los dos últimos de la ronda.
+  if ((partner - me.view.mano + 4) % 4 >= 2) {
+    me.send({ t: 'gaze', y: 0, p: 0 });
+    await sleep(100);
+    me.send({ t: 'sena', id: 'envido' });
+    const end = Date.now() + 14000;
+    while (Date.now() < end && !sang && me.view.phase === 'playing') {
+      sang = me.inbox.some((m) => m.t === 'game' && m.events.some((e) => e.e === 'canto' && e.seat === partner && e.canto === 'envido'));
+      const play = me.view.legal.find((a) => a.t === 'quiero') ?? me.view.legal.find((a) => a.t === 'play');
+      if (play && !sang) me.send({ t: 'act', a: play });
+      await sleep(250);
+    }
+  }
+  me.ws.close();
+}
+check('el bot canta envido cuando su compañero le hace la seña', sang);
+
 // --- Reconexión con token ---
 const code3 = await create(2);
 const first = await player(code3, 'Vuelve');

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { botAction } from '../src/engine/bot';
+import { botAction, botSena } from '../src/engine/bot';
 import { envidoPoints, hasFlor, makeCard, strength } from '../src/engine/cards';
 import {
   applyAction,
@@ -15,7 +15,7 @@ import {
   type Config,
   type GameState,
 } from '../src/engine/game';
-import { bearingTo, canSee } from '../src/shared/protocol';
+import { bearingTo, canSee, type SenaId } from '../src/shared/protocol';
 
 const c = makeCard;
 
@@ -170,11 +170,13 @@ describe('truco', () => {
     applyAction(s, 1, { t: 'quiero' });
     expect(s.hand.trucoHolder).toBe(1);
     expect(legalActions(s, 0).some((a) => a.t === 'truco')).toBe(false);
-    applyAction(s, 1, { t: 'truco' });
+    // Tiene el quiero, pero recién puede subir cuando le toca.
+    expect(legalActions(s, 1).some((a) => a.t === 'truco')).toBe(false);
+    applyAction(s, 0, { t: 'play', card: c('espada', 1) });
+    expect(applyAction(s, 1, { t: 'truco' })).toBe(true);
     applyAction(s, 0, { t: 'truco' });
     expect(s.hand.trucoPending?.level).toBe(3);
     applyAction(s, 1, { t: 'quiero' });
-    applyAction(s, 0, { t: 'play', card: c('espada', 1) });
     applyAction(s, 1, { t: 'play', card: c('oro', 4) });
     applyAction(s, 0, { t: 'play', card: c('basto', 1) });
     applyAction(s, 1, { t: 'play', card: c('oro', 5) });
@@ -202,6 +204,113 @@ describe('truco', () => {
     applyAction(s, 0, { t: 'play', card: c('basto', 1) });
     applyAction(s, 1, { t: 'play', card: c('oro', 5) });
     expect(s.scores).toEqual([1, 0]);
+  });
+});
+
+describe('truco y envido: cuándo se pueden cantar', () => {
+  const four = [
+    [c('oro', 4), c('oro', 5), c('copa', 6)],
+    [c('copa', 4), c('copa', 5), c('oro', 6)],
+    [c('basto', 4), c('basto', 5), c('espada', 6)],
+    [c('espada', 4), c('espada', 5), c('basto', 6)],
+  ];
+
+  it('de a 4 solo los dos últimos abren el envido', () => {
+    const s = rigged(four);
+    const canOpen = (seat: number) => legalActions(s, seat).some((a) => a.t === 'envido');
+    expect([0, 1, 2, 3].map(canOpen)).toEqual([false, false, true, true]);
+  });
+
+  it('de a 6 solo los dos últimos abren el envido', () => {
+    const six = [...four, [c('oro', 10), c('oro', 11), c('oro', 12)], [c('copa', 10), c('copa', 11), c('copa', 12)]];
+    const s = rigged(six);
+    const canOpen = (seat: number) => legalActions(s, seat).some((a) => a.t === 'envido');
+    expect([0, 1, 2, 3, 4, 5].map(canOpen)).toEqual([false, false, false, false, true, true]);
+  });
+
+  it.each([2, 4, 6] as const)('de a %i el truco se canta solo en el turno propio', (players) => {
+    const s = createGame({ players, target: 30, flor: false }, seeded(9));
+    for (let seat = 0; seat < players; seat++) {
+      expect(legalActions(s, seat).some((a) => a.t === 'truco')).toBe(seat === s.hand.turn);
+    }
+  });
+
+  it('el truco sigue pendiente después del envido, y rechazarlo termina la mano', () => {
+    const s = rigged([
+      [c('oro', 7), c('oro', 6), c('copa', 1)],
+      [c('espada', 7), c('espada', 5), c('copa', 2)],
+    ]);
+    applyAction(s, 0, { t: 'truco' });
+    applyAction(s, 1, { t: 'envido', call: 'envido' });
+    applyAction(s, 0, { t: 'noquiero' });
+    expect(s.events.some((e) => e.e === 'answer' && e.what === 'envido')).toBe(true);
+    expect(s.hand.trucoPending?.level).toBe(1);
+    expect(s.phase).toBe('playing');
+    // Mientras tanto nadie puede jugar: falta responder el truco.
+    expect(legalActions(s, 0)).toEqual([]);
+    expect(legalActions(s, 1).some((a) => a.t === 'play')).toBe(false);
+    applyAction(s, 1, { t: 'noquiero' });
+    expect(s.phase).toBe('handOver');
+    expect(s.scores).toEqual([1, 1]);
+  });
+});
+
+describe('el bot responde a la seña de envido', () => {
+  const hands = [
+    [c('oro', 4), c('copa', 5), c('espada', 6)],
+    [c('copa', 4), c('oro', 6), c('basto', 5)],
+    [c('basto', 4), c('espada', 5), c('oro', 10)],
+    [c('espada', 4), c('basto', 6), c('oro', 5)],
+  ];
+
+  function atPartnerTurn(): GameState {
+    const s = rigged(hands);
+    applyAction(s, 0, { t: 'play', card: c('oro', 4) });
+    applyAction(s, 1, { t: 'play', card: c('copa', 4) });
+    return s;
+  }
+
+  it('canta envido en su turno, aunque él tenga pocos tantos', () => {
+    // Con azar alto no cantaría truco ni envido por su cuenta.
+    const never = () => 0.99;
+    expect(botAction(atPartnerTurn(), 2, never, { partnerHasEnvido: true })).toEqual({ t: 'envido', call: 'envido' });
+    expect(botAction(atPartnerTurn(), 2, never)?.t).toBe('play');
+  });
+
+  it('si no le corresponde abrir el envido, sigue jugando', () => {
+    const s = rigged(hands);
+    expect(botAction(s, 0, () => 0.99, { partnerHasEnvido: true })?.t).toBe('play');
+  });
+
+  it('si los rivales cantan envido, lo acepta', () => {
+    const s = atPartnerTurn();
+    applyAction(s, 2, { t: 'play', card: c('basto', 4) });
+    applyAction(s, 3, { t: 'envido', call: 'envido' });
+    expect(botAction(s, 0, () => 0.99, { partnerHasEnvido: true })).toEqual({ t: 'quiero' });
+    expect(botAction(s, 0, () => 0.99)).toEqual({ t: 'noquiero' });
+  });
+});
+
+describe('señas de los bots', () => {
+  it('avisa envido y después su mejor carta, una vez cada una', () => {
+    const s = rigged([
+      [c('oro', 7), c('oro', 6), c('espada', 1)],
+      [c('copa', 4), c('copa', 5), c('copa', 6)],
+    ]);
+    const done = new Set<SenaId>();
+    expect(botSena(s, 0, done)).toBe('envido');
+    done.add('envido');
+    expect(botSena(s, 0, done)).toBe('ancho_espada');
+    done.add('ancho_espada');
+    expect(botSena(s, 0, done)).toBe(null);
+  });
+
+  it('sin nada que valga la pena, lo dice', () => {
+    const s = rigged([
+      [c('oro', 4), c('copa', 5), c('espada', 6)],
+      [c('copa', 4), c('copa', 6), c('basto', 5)],
+    ]);
+    expect(botSena(s, 0, new Set())).toBe('nada');
   });
 });
 
