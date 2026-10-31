@@ -148,7 +148,14 @@ await until(() => human.seat >= 0);
 human.send({ t: 'start', fill: true });
 await until(() => human.view);
 human.send({ t: 'gaze', y: 0, p: 0 });
-check('el bot compañero le hace una seña a quien lo mira', await until(() => human.inbox.some((m) => m.t === 'sena' && m.s === (human.seat + 2) % 4), 3000));
+// El bot hace sus señas en momentos al azar: quien mira de frente a su compañero las alcanza a ver.
+let seenFromPartner = false;
+for (let i = 0; i < 80 && !seenFromPartner; i++) {
+  human.send({ t: 'gaze', y: i % 2 ? 0.02 : 0, p: 0 });
+  await sleep(100);
+  seenFromPartner = human.inbox.some((m) => m.t === 'sena' && m.s === (human.seat + 2) % 4);
+}
+check('el bot compañero le hace una seña a quien lo mira', seenFromPartner);
 human.inbox.length = 0;
 human.send({ t: 'gaze', y: 0.785, p: 0 });
 await sleep(150);

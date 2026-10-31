@@ -14,7 +14,7 @@ export const SENAS = [
 
 export type SenaId = (typeof SENAS)[number]['id'];
 export const isSena = (id: unknown): id is SenaId => SENAS.some((s) => s.id === id);
-export const SENA_MS = 1400;
+export const SENA_MS = 600;
 
 export const PHRASES = [
   '¡Dale, que se hace tarde!',

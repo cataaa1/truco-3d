@@ -229,7 +229,7 @@ export class Room extends DurableObject<Env> {
     this.tryBotSenas(now);
   }
 
-  /** Igual que una persona: el bot espera a que su compañero lo mire y a que ningún rival lo esté mirando. */
+  /** Los bots hacen señas a escondidas: en momentos al azar y nunca mientras un rival los está mirando. */
   private tryBotSenas(now: number): void {
     const data = this.data!;
     const game = data.game;
@@ -240,18 +240,12 @@ export class Room extends DurableObject<Env> {
       return canSee(observer, target, data.players, y, p);
     };
     for (let seat = 0; seat < data.players; seat++) {
-      if (!data.seats[seat]?.bot || now - this.lastSena[seat]! < SENA_MS + 800) continue;
+      if (!data.seats[seat]?.bot || now - this.lastSena[seat]! < SENA_MS + 800 || Math.random() > 0.12) continue;
+      if (humans.some((h) => teamOf(h) !== teamOf(seat) && sees(h, seat))) continue;
       const teamHumans = humans.filter((h) => teamOf(h) === teamOf(seat));
-      let partner = teamHumans.find((h) => sees(h, seat));
-      if (teamHumans.length > 0) {
-        // Con un humano de compañero espera a que lo mire y a que ningún rival lo esté mirando.
-        if (partner === undefined || humans.some((h) => teamOf(h) !== teamOf(seat) && sees(h, seat))) continue;
-      } else {
-        // Un equipo de bots también se hace señas entre sí, a la vista de quien los mire.
-        if (!humans.some((h) => sees(h, seat))) continue;
-        partner = Array.from({ length: data.players }, (_, i) => i).find((i) => i !== seat && teamOf(i) === teamOf(seat));
-        if (partner === undefined) continue;
-      }
+      const partner =
+        teamHumans[0] ?? Array.from({ length: data.players }, (_, i) => i).find((i) => i !== seat && teamOf(i) === teamOf(seat));
+      if (partner === undefined) continue;
       const done = this.botSenasDone.get(seat) ?? new Set<SenaId>();
       const id = botSena(game, seat, done);
       if (!id) continue;
@@ -390,6 +384,7 @@ export class Room extends DurableObject<Env> {
 
     for (let seat = 0; seat < data.players; seat++) this.sendGame(seat, events);
     this.moveBotHeads();
+    this.tryBotSenas(Date.now());
     await this.commit();
   }
 
