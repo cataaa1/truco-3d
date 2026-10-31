@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
 const KB = 1024;
-const LIMITS = { entry: 25 * KB, game: 230 * KB, ambience: 300 * KB, deck: 400 * KB, total: 2048 * KB };
+const LIMITS = { entry: 25 * KB, game: 230 * KB, ambience: 300 * KB, deck: 400 * KB, menu: 260 * KB, total: 2048 * KB };
 
 const dir = 'dist/assets';
 const files = readdirSync(dir).filter((f) => statSync(join(dir, f)).isFile());
@@ -24,8 +24,10 @@ const entry = html + sum(isEntry);
 const game = sum(isGame);
 const isDeck = (f) => f.startsWith('cartas-');
 const deck = sum(isDeck);
-const ambience = sum((f) => !isEntry(f) && !isGame(f) && !isDeck(f));
-const total = entry + game + ambience + deck;
+const isMenu = (f) => f.startsWith('menu-') && f.endsWith('.webp');
+const menu = sum(isMenu);
+const ambience = sum((f) => !isEntry(f) && !isGame(f) && !isDeck(f) && !isMenu(f));
+const total = entry + game + ambience + deck + menu;
 
 const report = (name, value, limit) => {
   const ok = value <= limit;
@@ -38,6 +40,7 @@ const results = [
   report('mesa jugable', game, LIMITS.game),
   report('boliche y fuente', ambience, LIMITS.ambience),
   report('mazo de cartas', deck, LIMITS.deck),
+  report('carteles del inicio', menu, LIMITS.menu),
   report('total', total, LIMITS.total),
 ];
 if (results.includes(false)) process.exit(1);

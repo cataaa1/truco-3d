@@ -1,4 +1,4 @@
-# Trick
+# Truco Online
 
 Truco argentino en 3D y primera persona, para el navegador. Las señas son gestos en la cara de los avatares: solo los ve quien está mirando en ese momento.
 

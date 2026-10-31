@@ -349,7 +349,7 @@ function drawMainSign(ctx: Ctx, w: number, h: number): void {
     scroll(ctx, x, h - 72, 130, flip, sky, '#1c5a7c');
   }
   lettering(ctx, 'BOLICHE', w / 2, 76, 58, cream, red, black, 520);
-  lettering(ctx, 'TRICK', w / 2, 192, 138, cream, sky, black, 660);
+  lettering(ctx, 'TRUCO', w / 2, 192, 138, cream, sky, black, 660);
   lettering(ctx, 'truco, grapa y señas', w / 2, 306, 42, gold, red, black, 640);
   flower(ctx, 196, h / 2 + 2, 28, cream, gold);
   flower(ctx, w - 196, h / 2 + 2, 28, cream, gold);

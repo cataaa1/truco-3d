@@ -122,7 +122,7 @@ function drawBack(ctx: CanvasRenderingContext2D, x: number, y: number): void {
   ctx.font = '700 44px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('TRICK', CARD_W / 2, CARD_H / 2);
+  ctx.fillText('TRUCO', CARD_W / 2, CARD_H / 2);
   ctx.restore();
 }
 
