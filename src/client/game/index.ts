@@ -3,6 +3,7 @@ import { PHRASES, SENA_MS, SENAS, type RoomInfo, type ServerMessage } from '../.
 import type { Connection } from '../net';
 import { faceSlot, faceThumbnail } from './atlas';
 import { TableScene } from './scene';
+import { TableVoices } from './voices';
 
 export interface GameController {
   handle(message: ServerMessage): void;
@@ -98,16 +99,6 @@ function tallySvg(points: number, target: number): string {
   return `<svg class="tally" viewBox="0 0 36 ${y}" width="36" height="${y}">${out}</svg>`;
 }
 
-function speak(text: string): void {
-  // Voz provisoria del navegador, hasta tener grabaciones propias. No pesa nada.
-  if (!('speechSynthesis' in window)) return;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = 'es-AR';
-  utterance.rate = 1.15;
-  speechSynthesis.cancel();
-  speechSynthesis.speak(utterance);
-}
-
 export function mountGame(
   host: HTMLElement,
   conn: Connection,
@@ -117,7 +108,7 @@ export function mountGame(
 ): GameController {
   let room = initialRoom;
   let view: PlayerView | null = null;
-  let muted = false;
+  let previousPending: string | null = null;
 
   host.innerHTML = `
     <style>${STYLE}</style>
@@ -141,9 +132,12 @@ export function mountGame(
   const $ = (id: string) => document.getElementById(id)!;
   const canvas = host.querySelector('canvas.view') as HTMLCanvasElement;
   const scene = new TableScene(canvas, room.players, me, room.code);
+  const voices = new TableVoices(room.code, room.players, me);
   const teamGame = room.players > 2;
   try {
-    if (sessionStorage.getItem('trick:debug')) (window as unknown as { __trick: TableScene }).__trick = scene;
+    if (sessionStorage.getItem('trick:debug')) {
+      Object.assign(window, { __trick: scene, __voices: voices });
+    }
   } catch {
     // Sin almacenamiento no hay modo de depuración.
   }
@@ -162,8 +156,26 @@ export function mountGame(
     setTimeout(() => wrap.remove(), ms);
   }
 
-  function say(text: string): void {
-    if (!muted) speak(text);
+  /** El truco a veces se canta con verso. La elección es igual en todas las pantallas. */
+  function trucoClip(seat: number): string {
+    const verse = voices.pick(`verso:${view?.scores}:${seat}`, ['truco', 'truco', 'truco', 'truco_verso1', 'truco_verso2']);
+    return voices.has(seat, verse) ? verse : 'truco';
+  }
+
+  function cantoClip(seat: number, canto: string): string {
+    if (canto === 'truco') return trucoClip(seat);
+    const envido = canto === 'envido' || canto === 'real' || canto === 'falta';
+    return envido && previousPending === 'truco' && voices.has(seat, 'envido_primero') ? 'envido_primero' : canto;
+  }
+
+  /** Comentario ocasional de quien ganó la mano, si esa voz lo tiene grabado. */
+  function maybeBanter(team: number, points: number): void {
+    const seats = Array.from({ length: room.players }, (_, seat) => seat).filter((seat) => teamOf(seat) === team && seat !== me);
+    if (seats.length === 0) return;
+    const salt = `dicho:${view?.scores}:${points}`;
+    const seat = Number(voices.pick(salt, seats.map(String)));
+    const clip = voices.pick(salt, ['', '', '', 'dicho1', 'dicho2', 'dicho3', 'dicho4', 'dicho5', 'dicho6', 'dicho7', 'dicho8']);
+    if (clip) setTimeout(() => voices.play(seat, clip), 900);
   }
 
   function describe(event: GameEvent): void {
@@ -171,22 +183,28 @@ export function mountGame(
       case 'canto': {
         const text = CANTO_TEXT[event.canto] ?? event.canto;
         toast(`${nameOf(event.seat)}: ${text}`);
-        say(text);
+        voices.play(event.seat, cantoClip(event.seat, event.canto), text);
         break;
       }
       case 'answer': {
         const what = event.what === 'truco' ? 'el truco' : event.what === 'envido' ? 'el envido' : 'la flor';
         const text = event.quiero ? `¡Quiero ${what}!` : `No quiero ${what}`;
         toast(`${nameOf(event.seat)}: ${text}`);
-        say(event.quiero ? '¡Quiero!' : 'No quiero');
+        const clip = event.quiero ? 'quiero' : event.what === 'flor' && voices.has(event.seat, 'achico') ? 'achico' : 'noquiero';
+        voices.play(event.seat, clip, event.quiero ? '¡Quiero!' : 'No quiero');
         break;
       }
       case 'mazo':
         toast(`${nameOf(event.seat)} se fue al mazo`);
+        voices.play(event.seat, 'mazo');
         break;
       case 'envido':
-        if (event.tantos >= 0) toast(`${nameOf(event.seat)} tiene ${event.tantos}: ${event.points} para ${teamLabel(event.team)}`, 3600);
-        else toast(`Envido rechazado: ${event.points} para ${teamLabel(event.team)}`);
+        if (event.tantos >= 0) {
+          toast(`${nameOf(event.seat)} tiene ${event.tantos}: ${event.points} para ${teamLabel(event.team)}`, 3600);
+          voices.play(event.seat, String(event.tantos));
+          const rival = (event.seat + 1) % room.players;
+          setTimeout(() => voices.play(rival, 'son_buenas'), 800);
+        } else toast(`Envido rechazado: ${event.points} para ${teamLabel(event.team)}`);
         break;
       case 'flor':
         toast(`Flor: ${event.points} para ${teamLabel(event.team)}`);
@@ -196,6 +214,7 @@ export function mountGame(
         break;
       case 'hand':
         toast(`${handReason(event.reason)}${event.points} ${event.points === 1 ? 'punto' : 'puntos'} para ${teamLabel(event.team)}`, 3200);
+        maybeBanter(event.team, event.points);
         break;
       default:
         break;
@@ -389,8 +408,8 @@ export function mountGame(
     renderPanel();
   });
   $('mute-btn').addEventListener('click', () => {
-    muted = !muted;
-    $('mute-btn').textContent = `Voz: ${muted ? 'no' : 'sí'}`;
+    voices.muted = !voices.muted;
+    $('mute-btn').textContent = `Voz: ${voices.muted ? 'no' : 'sí'}`;
   });
 
   // Solo se manda la mirada si la cabeza se movió, para cuidar el cupo diario del servidor.
@@ -504,6 +523,7 @@ export function mountGame(
           scene.setTags(names(), lastTurn);
           break;
         case 'game':
+          previousPending = view?.pendingLabel ?? null;
           view = message.view;
           for (const event of message.events) describe(event);
           // El envido se resuelve primero, pero el truco cantado antes sigue esperando respuesta.
@@ -530,6 +550,7 @@ export function mountGame(
           break;
         case 'phrase':
           toast(`${nameOf(message.s)}: ${PHRASES[message.i] ?? ''}`);
+          voices.play(message.s, `frase${message.i + 1}`);
           break;
         case 'err':
           toast(message.msg);
@@ -548,7 +569,7 @@ export function mountGame(
       document.removeEventListener('keyup', onKeyUp);
       document.removeEventListener('pointerlockchange', onLockChange);
       if (isLocked()) document.exitPointerLock();
-      if ('speechSynthesis' in window) speechSynthesis.cancel();
+      voices.dispose();
       scene.dispose();
     },
   };

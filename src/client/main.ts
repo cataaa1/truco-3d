@@ -15,8 +15,8 @@ const app = document.getElementById('app')!;
 const loadGame = () => import('./game/index');
 
 // La mesa 3D se baja en segundo plano: la entrada no espera a Three.js.
-const idle = window.requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 200));
-idle(() => void loadGame());
+if (window.requestIdleCallback) window.requestIdleCallback(() => void loadGame(), { timeout: 2000 });
+else setTimeout(() => void loadGame(), 200);
 
 const escapeHtml = (text: string) =>
   text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
