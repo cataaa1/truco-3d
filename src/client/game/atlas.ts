@@ -106,12 +106,19 @@ function drawCard(ctx: CanvasRenderingContext2D, card: CardId, x: number, y: num
 function drawBack(ctx: CanvasRenderingContext2D, x: number, y: number): void {
   ctx.save();
   ctx.translate(x, y);
-  ctx.fillStyle = '#7d2a26';
+  ctx.fillStyle = '#14100c';
   ctx.fillRect(4, 4, CARD_W - 8, CARD_H - 8);
-  ctx.strokeStyle = '#f0d9a8';
-  ctx.lineWidth = 6;
-  ctx.strokeRect(16, 16, CARD_W - 32, CARD_H - 32);
-  ctx.fillStyle = '#f0d9a8';
+  ctx.strokeStyle = '#58b7e6';
+  ctx.lineWidth = 8;
+  ctx.strokeRect(14, 14, CARD_W - 28, CARD_H - 28);
+  ctx.strokeStyle = '#e3a93c';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(28, 28, CARD_W - 56, CARD_H - 56);
+  ctx.fillStyle = '#b3261e';
+  ctx.beginPath();
+  ctx.ellipse(CARD_W / 2, CARD_H / 2, 84, 52, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#f4e6c4';
   ctx.font = '700 44px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';

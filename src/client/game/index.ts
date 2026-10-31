@@ -16,27 +16,30 @@ const STYLE = `
   .hud { position: absolute; pointer-events: none; }
   .hud button, .hud .panel { pointer-events: auto; }
   #overlay { inset: 0; }
-  .score { top: 12px; left: 12px; background: rgba(20,14,10,.82); border-radius: 10px; padding: 10px 14px; min-width: 150px; }
-  .score b { font-size: 22px; }
+  .score { top: 12px; left: 12px; background: rgba(20,16,12,.92); border: 2px solid var(--gold); outline: 2px solid var(--sky); outline-offset: 2px; border-radius: 4px; padding: 8px 14px; min-width: 160px; }
+  .score b { font: 400 24px/1.1 var(--lettering); color: var(--cream); }
   .score .us, .score .them { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
   .score .us { color: var(--us); } .score .them { color: var(--them); }
-  .status { top: 12px; left: 50%; transform: translateX(-50%); background: rgba(20,14,10,.82); border-radius: 10px; padding: 8px 16px; text-align: center; min-width: 240px; }
-  .timer { height: 4px; background: var(--accent); margin-top: 6px; border-radius: 2px; transform-origin: left; }
-  .toasts { top: 120px; left: 50%; transform: translateX(-50%); text-align: center; width: min(520px, 90vw); }
-  .toast { background: rgba(232,176,74,.95); color: #241808; font-weight: 600; border-radius: 8px; padding: 6px 12px; margin-bottom: 6px; display: inline-block; }
+  .status { top: 12px; left: 50%; transform: translateX(-50%); background: rgba(20,16,12,.92); border: 2px solid var(--gold); border-radius: 4px; padding: 8px 18px; text-align: center; min-width: 260px; max-width: 46vw; font-family: var(--lettering); color: var(--cream); text-shadow: 1px 1px 0 #000; }
+  .timer { height: 4px; background: var(--gold); margin-top: 6px; border-radius: 2px; transform-origin: left; }
+  .toasts { top: 112px; left: 50%; transform: translateX(-50%); text-align: center; width: min(560px, 90vw); }
+  .toast { background: var(--cream); color: var(--red); font: 400 19px/1.25 var(--lettering); border: 3px solid var(--red); outline: 2px solid var(--gold); border-radius: 4px; padding: 6px 16px; margin-bottom: 8px; display: inline-block; box-shadow: 0 4px 14px rgba(0,0,0,.5); }
   .actions { bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; width: min(760px, 96vw); }
-  .actions button { background: rgba(42,32,26,.94); }
-  .actions button.answer { background: var(--accent); color: #241808; font-weight: 600; }
-  kbd { font: 12px ui-monospace, monospace; background: rgba(255,255,255,.14); border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
+  .actions button { background: rgba(20,16,12,.95); font-family: var(--lettering); color: var(--cream); }
+  .actions button:hover:not(:disabled) { background: #33261a; }
+  .actions button.answer { background: var(--red); border-color: var(--cream); }
+  .actions button.answer:hover:not(:disabled) { background: #cf3227; }
+  .actions .tip { width: 100%; text-align: center; color: var(--cream); text-shadow: 0 1px 3px #000, 0 0 6px #000; font-size: 14px; }
+  kbd { font: 12px ui-monospace, Consolas, monospace; background: rgba(255,255,255,.14); color: var(--cream); border-radius: 3px; padding: 1px 5px; margin-left: 6px; text-shadow: none; }
   .tools { top: 12px; right: 12px; display: flex; gap: 8px; }
-  .tools button { background: rgba(20,14,10,.82); padding: 6px 10px; font-size: 14px; }
-  .crosshair { top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: rgba(255,255,255,.7); }
-  .panel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(20,14,10,.95); border: 1px solid var(--line); border-radius: 12px; padding: 16px; width: min(460px, 92vw); max-height: 86vh; overflow: auto; }
+  .tools button { background: rgba(20,16,12,.92); padding: 6px 10px; font-size: 14px; border-width: 1px; }
+  .crosshair { top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: rgba(255,240,200,.8); box-shadow: 0 0 2px #000; }
+  .panel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(20,16,12,.97); border: 3px solid var(--gold); outline: 3px solid var(--sky); outline-offset: 3px; border-radius: 4px; padding: 18px; width: min(480px, 92vw); max-height: 84vh; overflow: auto; }
   .panel h2 { margin-bottom: 8px; }
-  .sena-row { display: flex; align-items: center; gap: 10px; padding: 3px 0; width: 100%; text-align: left; background: none; border: 0; border-radius: 6px; }
+  .sena-row { display: flex; align-items: center; gap: 10px; padding: 3px 4px; width: 100%; text-align: left; background: none; border: 0; border-radius: 4px; }
   .sena-row canvas { width: 40px; height: 40px; flex: none; }
-  .hint { top: 76px; left: 50%; transform: translateX(-50%); background: rgba(20,14,10,.82); border-radius: 8px; padding: 6px 12px; font-size: 14px; text-align: center; }
-  .offline { top: 60px; right: 12px; background: var(--them); color: #240; border-radius: 8px; padding: 6px 12px; }
+  .hint { top: 74px; left: 50%; transform: translateX(-50%); background: rgba(20,16,12,.85); border-radius: 4px; padding: 5px 12px; font-size: 14px; text-align: center; white-space: nowrap; max-width: 96vw; }
+  .offline { top: 60px; right: 12px; background: var(--red); color: var(--cream); border-radius: 4px; padding: 6px 12px; }
 `;
 
 const CANTO_TEXT: Record<string, string> = {
@@ -108,7 +111,7 @@ export function mountGame(
 
   const $ = (id: string) => document.getElementById(id)!;
   const canvas = host.querySelector('canvas.view') as HTMLCanvasElement;
-  const scene = new TableScene(canvas, room.players, me);
+  const scene = new TableScene(canvas, room.players, me, room.code);
   const teamGame = room.players > 2;
   try {
     if (sessionStorage.getItem('trick:debug')) (window as unknown as { __trick: TableScene }).__trick = scene;
@@ -424,9 +427,7 @@ export function mountGame(
     add('flor', 'Flor', 'L');
     add('mazo', 'Mazo', 'M');
     const tip = document.createElement('div');
-    tip.className = 'muted';
-    tip.style.width = '100%';
-    tip.style.textAlign = 'center';
+    tip.className = 'tip';
     const cardsHelp = v.legal.some((a) => a.t === 'play') ? 'Clic en una carta o 1, 2, 3 para jugarla. ' : '';
     tip.textContent = `${cardsHelp}Tenés ${v.myTantos} de envido.${teamGame ? ' Q + número: seña.' : ''} C + número: frase.`;
     box.append(tip);

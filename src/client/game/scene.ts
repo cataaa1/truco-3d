@@ -30,11 +30,15 @@ import type { CardId } from '../../engine/cards';
 import type { PlayerView } from '../../engine/game';
 import { MAX_PITCH, MAX_YAW, MIN_PITCH } from '../../shared/protocol';
 import { BACK_SLOT, buildCardAtlas, buildFaceAtlas, CARD_GRID, FACE_GRID, NEUTRAL_FACE } from './atlas';
+import { appearanceFor, characterMaterial, setCharacterInstances } from './characters';
 
 const EYE_HEIGHT = 1.18;
 const TABLE_Y = 0.74;
 const HEAD_RADIUS = 0.17;
 const FOV = 55;
+const FACE_SIZE = 0.3;
+const HEAD_SHAPE = { x: 0.165, y: 0.175, z: 0.165 };
+const TAG_HEIGHT = 0.36;
 
 const VERTEX = /* glsl */ `
   attribute float aSlot;
@@ -58,12 +62,12 @@ const FRAGMENT = /* glsl */ `
   }`;
 
 /** Muchos rectángulos con la misma textura, en una sola llamada de dibujo. */
-function atlasQuads(canvas: HTMLCanvasElement, cols: number, rows: number, count: number, anisotropy: number) {
+function atlasQuads(canvas: HTMLCanvasElement, cols: number, rows: number, count: number, anisotropy: number, shape?: PlaneGeometry) {
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
   texture.minFilter = LinearMipmapLinearFilter;
   texture.anisotropy = anisotropy;
-  const geometry = new PlaneGeometry(1, 1);
+  const geometry = shape ?? new PlaneGeometry(1, 1);
   const slots = new InstancedBufferAttribute(new Float32Array(count), 1);
   geometry.setAttribute('aSlot', slots);
   const material = new ShaderMaterial({
@@ -97,6 +101,19 @@ interface Head {
   faceTimer: ReturnType<typeof setTimeout> | null;
 }
 
+/** Plano apoyado sobre la cabeza: la cara se ve bien también cuando la persona gira. */
+function curvedFace(): PlaneGeometry {
+  const geometry = new PlaneGeometry(1, 1, 8, 8);
+  const position = geometry.getAttribute('position');
+  const { x: rx, y: ry, z: rz } = HEAD_SHAPE;
+  for (let i = 0; i < position.count; i++) {
+    const x = (position.getX(i) * FACE_SIZE) / rx;
+    const y = (position.getY(i) * FACE_SIZE) / ry;
+    position.setZ(i, rz * Math.sqrt(Math.max(0.02, 1 - x * x - y * y)) + 0.003);
+  }
+  return geometry;
+}
+
 const helper = new Object3D();
 const matrix = new Matrix4();
 
@@ -115,19 +132,23 @@ export class TableScene {
   private readonly tags;
   private readonly tagCanvas: HTMLCanvasElement;
   private readonly heads: Head[];
-  private readonly headMesh: InstancedMesh;
+  private headMesh: InstancedMesh;
+  private headLocal = new Matrix4();
+  private bodies: InstancedMesh | null = null;
   private readonly sprites = new Map<string, CardSprite>();
   private myCards: CardId[] = [];
   private hovered = -1;
   private frame = 0;
   private lastTime = 0;
   private disposed = false;
+  private roomTexture: CanvasTexture | null = null;
   private readonly resizeObserver: ResizeObserver;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly players: number,
     private readonly me: number,
+    private readonly roomCode: string,
     readonly faceAtlas: HTMLCanvasElement = buildFaceAtlas(),
   ) {
     this.renderer = new WebGLRenderer({
@@ -148,7 +169,7 @@ export class TableScene {
     this.camera.rotation.order = 'YXZ';
     this.camera.position.set(0, EYE_HEIGHT, this.seatRadius);
 
-    this.scene.add(new HemisphereLight(0xfff0dc, 0x8a6a50, 2.2), this.keyLight());
+    this.scene.add(new HemisphereLight(0xffdcae, 0x6a4a34, 2.0), this.keyLight());
     this.buildRoom(tableRadius);
 
     const anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
@@ -168,7 +189,7 @@ export class TableScene {
     this.headMesh.frustumCulled = false;
     this.scene.add(this.headMesh);
 
-    this.faces = atlasQuads(this.faceAtlas, FACE_GRID.cols, FACE_GRID.rows, others, anisotropy);
+    this.faces = atlasQuads(this.faceAtlas, FACE_GRID.cols, FACE_GRID.rows, others, anisotropy, curvedFace());
     this.faces.mesh.count = others;
     this.scene.add(this.faces.mesh);
 
@@ -191,25 +212,123 @@ export class TableScene {
   }
 
   private keyLight(): DirectionalLight {
-    const light = new DirectionalLight(0xffe2b8, 1.4);
-    light.position.set(1, 4, 1.5);
+    const light = new DirectionalLight(0xffd199, 1.6);
+    light.position.set(0.4, 3, 0.8);
     return light;
   }
 
   private buildRoom(tableRadius: number): void {
-    const table = new Mesh(
-      new CylinderGeometry(tableRadius, tableRadius, 0.05, 48),
-      new MeshLambertMaterial({ color: 0x24613f }),
-    );
-    table.position.y = TABLE_Y - 0.025;
-    const rim = new Mesh(
-      new CylinderGeometry(tableRadius + 0.04, tableRadius + 0.02, 0.07, 48),
-      new MeshLambertMaterial({ color: 0x5a3820 }),
-    );
-    rim.position.y = TABLE_Y - 0.05;
-    const room = new Mesh(new BoxGeometry(8, 3.4, 8), new MeshBasicMaterial({ color: 0x4a3426, side: BackSide }));
-    room.position.y = 1.7;
-    this.scene.add(rim, table, room);
+    // Versión simple para el primer cuadro; el boliche llega después sin frenar la entrada.
+    const table = new Mesh(new CylinderGeometry(tableRadius, tableRadius, 0.08, 32), new MeshBasicMaterial({ color: 0x5a3019 }));
+    table.position.y = TABLE_Y - 0.04;
+    const room = new Mesh(new BoxGeometry(8, 3.6, 8), new MeshBasicMaterial({ color: 0x2a1c12, side: BackSide }));
+    room.position.y = 1.8;
+    this.scene.add(table, room);
+    void this.loadBoliche(tableRadius, [table, room]).catch(() => {
+      // Si falla la descarga se sigue jugando en la versión simple.
+    });
+  }
+
+  private async loadBoliche(tableRadius: number, placeholders: Mesh[]): Promise<void> {
+    const [{ GLTFLoader }, { MeshoptDecoder }, { default: url }, { buildRoomAtlas }] = await Promise.all([
+      import('three/addons/loaders/GLTFLoader.js'),
+      import('three/addons/libs/meshopt_decoder.module.js'),
+      import('./assets/boliche.glb?url'),
+      import('./roomAtlas'),
+      document.fonts.load('40px Rye').catch(() => []),
+    ]);
+    const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(url);
+    if (this.disposed) return;
+
+    const texture = new CanvasTexture(buildRoomAtlas());
+    texture.colorSpace = SRGBColorSpace;
+    texture.flipY = false;
+    texture.minFilter = LinearMipmapLinearFilter;
+    texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    this.roomTexture = texture;
+    // Sin luces en tiempo real: los colores ya vienen horneados en cada vértice.
+    const material = new MeshBasicMaterial({ map: texture, vertexColors: true, side: DoubleSide });
+
+    const part = (name: string) => {
+      const mesh = gltf.scene.getObjectByName(name) as Mesh;
+      (mesh.material as MeshBasicMaterial).dispose();
+      mesh.material = material;
+      return mesh;
+    };
+    const room = part('boliche');
+    const table = part('mesa');
+    const chairModel = part('silla');
+    chairModel.updateMatrix();
+    this.buildCharacters(gltf.scene.getObjectByName('cuerpo') as Mesh, gltf.scene.getObjectByName('cabeza') as Mesh);
+
+    const tableHolder = new Object3D();
+    tableHolder.position.y = TABLE_Y;
+    tableHolder.scale.set(tableRadius + 0.04, 1, tableRadius + 0.04);
+    tableHolder.add(table);
+
+    const others = this.otherSeats();
+    const chairs = new InstancedMesh(chairModel.geometry, material, others.length);
+    chairs.frustumCulled = false;
+    others.forEach((seat, index) => {
+      const pos = this.seatPosition(seat);
+      const out = (this.seatRadius + 0.05) / this.seatRadius;
+      helper.position.set(pos.x * out, 0, pos.z * out);
+      helper.rotation.set(0, this.seatAngle(seat) + Math.PI, 0);
+      helper.scale.set(1, 1, 1);
+      helper.updateMatrix();
+      chairs.setMatrixAt(index, matrix.multiplyMatrices(helper.matrix, chairModel.matrix));
+    });
+
+    for (const placeholder of placeholders) {
+      this.scene.remove(placeholder);
+      placeholder.geometry.dispose();
+      (placeholder.material as MeshBasicMaterial).dispose();
+    }
+    room.frustumCulled = false;
+    table.frustumCulled = false;
+    this.scene.add(room, tableHolder, chairs);
+    this.renderer.setClearColor(0x14100c);
+    this.invalidate();
+  }
+
+  /** Reemplaza los muñecos provisorios. Mi cuerpo también se dibuja: al mirar abajo veo mis brazos. */
+  private buildCharacters(bodyModel: Mesh, headModel: Mesh): void {
+    const material = characterMaterial();
+    const others = this.otherSeats();
+    const seats = [...others, this.me];
+    const looks = seats.map((seat) => appearanceFor(this.roomCode, seat, seat % 2 === this.me % 2));
+
+    bodyModel.updateMatrix();
+    const bodies = new InstancedMesh(bodyModel.geometry, material, seats.length);
+    bodies.frustumCulled = false;
+    seats.forEach((seat, index) => {
+      const pos = this.seatPosition(seat);
+      helper.position.set(pos.x, 0, pos.z);
+      helper.rotation.order = 'YXZ';
+      helper.rotation.set(0, this.seatAngle(seat) + Math.PI, 0);
+      helper.scale.set(1, 1, 1);
+      helper.updateMatrix();
+      bodies.setMatrixAt(index, matrix.multiplyMatrices(helper.matrix, bodyModel.matrix));
+    });
+    setCharacterInstances(bodies.geometry, looks);
+
+    headModel.updateMatrix();
+    this.headLocal = headModel.matrix.clone();
+    const heads = new InstancedMesh(headModel.geometry, material, others.length);
+    heads.frustumCulled = false;
+    setCharacterInstances(heads.geometry, looks.slice(0, others.length));
+
+    for (const old of [this.bodies, this.headMesh]) {
+      if (!old) continue;
+      this.scene.remove(old);
+      old.geometry.dispose();
+      (old.material as MeshLambertMaterial).dispose();
+      old.dispose();
+    }
+    this.bodies = bodies;
+    this.headMesh = heads;
+    this.scene.add(bodies, heads);
+    this.updateHeadMatrices();
   }
 
   /** Posición relativa: yo siempre en el sur, y el siguiente asiento a mi derecha. */
@@ -241,17 +360,18 @@ export class TableScene {
       helper.scale.set(1, 1, 1);
       helper.updateMatrix();
       bodies.setMatrixAt(index, helper.matrix);
-      bodies.setColorAt(index, color.set(seat % 2 === this.me % 2 ? 0x3f7fb5 : 0xb5473f));
+      bodies.setColorAt(index, color.set(seat % 2 === this.me % 2 ? 0x2f6f9e : 0x9e3a30));
     });
+    this.bodies = bodies;
     this.scene.add(bodies);
   }
 
   private placeTags(): void {
     this.otherSeats().forEach((seat, index) => {
       const pos = this.seatPosition(seat);
-      helper.position.set(pos.x, pos.y + HEAD_RADIUS + 0.09, pos.z);
+      helper.position.set(pos.x, pos.y + TAG_HEIGHT, pos.z);
       helper.lookAt(this.camera.position);
-      helper.scale.set(0.46, 0.115, 1);
+      helper.scale.set(0.4, 0.1, 1);
       helper.updateMatrix();
       this.tags.mesh.setMatrixAt(index, helper.matrix);
       this.tags.slots.setX(index, index);
@@ -264,15 +384,15 @@ export class TableScene {
   setTags(names: string[], turn: number): void {
     const ctx = this.tagCanvas.getContext('2d')!;
     ctx.clearRect(0, 0, 512, 192);
-    ctx.font = '600 30px system-ui, sans-serif';
+    ctx.font = '700 30px Georgia, serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     this.otherSeats().forEach((seat, index) => {
       const x = (index % 2) * 256;
       const y = Math.floor(index / 2) * 64;
-      ctx.fillStyle = seat === turn ? '#e8b04a' : 'rgba(20,14,10,.8)';
+      ctx.fillStyle = seat === turn ? '#e3a93c' : 'rgba(20,16,12,.88)';
       ctx.fillRect(x + 4, y + 4, 248, 56);
-      ctx.fillStyle = seat === turn ? '#241808' : seat % 2 === this.me % 2 ? '#a8d4f5' : '#f5b0a8';
+      ctx.fillStyle = seat === turn ? '#14100c' : seat % 2 === this.me % 2 ? '#9ed6f5' : '#f5b0a8';
       ctx.fillText(names[seat] ?? '', x + 128, y + 33, 236);
     });
     this.tags.texture.needsUpdate = true;
@@ -442,9 +562,8 @@ export class TableScene {
       helper.rotation.set(-head.pitch, this.seatAngle(seat) + Math.PI - head.yaw, 0);
       helper.scale.set(1, 1, 1);
       helper.updateMatrix();
-      this.headMesh.setMatrixAt(index, helper.matrix);
-      matrix.makeTranslation(0, 0, HEAD_RADIUS * 0.94).scale(new Vector3(0.3, 0.3, 1));
-      matrix.premultiply(helper.matrix);
+      this.headMesh.setMatrixAt(index, matrix.multiplyMatrices(helper.matrix, this.headLocal));
+      matrix.makeScale(FACE_SIZE, FACE_SIZE, 1).premultiply(helper.matrix);
       this.faces.mesh.setMatrixAt(index, matrix);
       this.faces.slots.setX(index, head.face);
     });
@@ -507,6 +626,7 @@ export class TableScene {
     this.cards.texture.dispose();
     this.faces.texture.dispose();
     this.tags.texture.dispose();
+    this.roomTexture?.dispose();
     this.renderer.dispose();
   }
 }

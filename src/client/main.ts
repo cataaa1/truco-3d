@@ -1,4 +1,5 @@
 import type { PublicRoom, RoomInfo, ServerMessage } from '../shared/protocol';
+import './style.css';
 import { Connection } from './net';
 
 const app = document.getElementById('app')!;
@@ -33,15 +34,18 @@ function showHome(error = ''): void {
   history.replaceState(null, '', '/');
   app.innerHTML = `
     <main class="page">
-      <h1>Trick</h1>
-      <p class="sub">Truco argentino en primera persona. Sin cuenta: entrás con un código.</p>
+      <header class="filete marquee">
+        <div class="kicker">BOLICHE</div>
+        <h1>TRICK</h1>
+        <div class="tagline">truco, grapa y señas</div>
+      </header>
       ${isMobile() ? '<div class="warn">Por ahora Trick se juega en computadora, con mouse y teclado.</div>' : ''}
       <div class="stack" style="margin-bottom:16px">
         <div><label for="name">Tu nombre</label>
         <input id="name" maxlength="16" placeholder="Invitado" value="${escapeHtml(readName())}" /></div>
       </div>
       <div class="grid">
-        <section class="card stack">
+        <section class="filete stack">
           <h2>Entrar con código</h2>
           <form id="join" class="row">
             <input id="code" inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="1234" aria-label="Código de la sala" />
@@ -49,7 +53,7 @@ function showHome(error = ''): void {
           </form>
           <button id="quick" style="width:100%">Jugar ya</button>
         </section>
-        <section class="card stack">
+        <section class="filete stack">
           <h2>Crear sala</h2>
           <div class="row">
             <div style="flex:1"><label for="players">Jugadores</label>
@@ -63,7 +67,7 @@ function showHome(error = ''): void {
         </section>
       </div>
       <p class="error" id="error" role="alert">${escapeHtml(error)}</p>
-      <section class="card" style="margin-top:8px">
+      <section class="filete" style="margin-top:12px">
         <h2>Salas públicas</h2>
         <div id="rooms" class="stack muted">Buscando...</div>
       </section>
@@ -208,10 +212,11 @@ function showLobby(room: RoomInfo, you: number, conn: Connection, leave: () => v
       ? ''
       : '<p class="muted">Si no se completa en unos segundos, los lugares vacíos se llenan con bots.</p>';
   app.innerHTML = `
-    <main class="page" style="max-width:520px">
-      <p class="muted">${room.public ? 'Sala pública' : 'Sala privada'} para ${room.players}, a ${room.target} puntos</p>
+    <main class="page" style="max-width:560px">
+      <div class="filete">
+      <p class="muted" style="text-align:center;margin-top:0">${room.public ? 'Mesa pública' : 'Mesa privada'} para ${room.players}, a ${room.target} puntos</p>
       <div class="code" aria-label="Código de la sala">${room.code}</div>
-      <p class="muted">Pasales este código a los demás. Los colores marcan los equipos.</p>
+      <p class="muted" style="text-align:center">Pasales este código a los demás. Los colores marcan los equipos.</p>
       <div class="stack">${seats}</div>
       ${fillNote}
       <div class="row" style="margin-top:16px;flex-wrap:wrap">
@@ -220,6 +225,7 @@ function showLobby(room: RoomInfo, you: number, conn: Connection, leave: () => v
         <button id="leave">Salir</button>
       </div>
       <p class="error" id="error" role="alert"></p>
+      </div>
     </main>`;
   document.getElementById('start')?.addEventListener('click', () => conn.send({ t: 'start', fill: false }));
   document.getElementById('fill')?.addEventListener('click', () => conn.send({ t: 'start', fill: true }));
