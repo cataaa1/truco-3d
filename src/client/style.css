@@ -28,14 +28,12 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
-  background-color: #3a2312;
-  /* Tablas de madera: luz cálida arriba, juntas entre tablas y veta estirada a lo largo. */
+  background-color: #2a180d;
   background-image:
-    radial-gradient(ellipse 80% 70% at 50% 28%, rgba(255, 196, 120, 0.2), rgba(20, 10, 4, 0.1) 52%, rgba(8, 4, 2, 0.74) 100%),
-    repeating-linear-gradient(180deg, rgba(10, 5, 2, 0.88) 0 3px, rgba(255, 215, 165, 0.1) 3px 5px, transparent 5px 118px),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1400' height='708'%3E%3Cfilter id='w' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.0035 .11' numOctaves='4' seed='8' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .08 0 0 0 0 .035 0 0 0 0 .01 1.5 0 0 0 -.42'/%3E%3C/filter%3E%3Crect width='1400' height='708' filter='url(%23w)'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, #5c3820 0 118px, #4e2e19 118px 236px, #5f3a22 236px 354px, #48291a 354px 472px, #573420 472px 590px, #4c2c18 590px 708px);
-  background-size: 100% 100%, auto, 1400px 708px, 100% 708px;
+    radial-gradient(ellipse 85% 75% at 50% 32%, rgba(255, 190, 120, 0.1), rgba(10, 5, 2, 0.12) 55%, rgba(5, 2, 1, 0.72) 100%),
+    url('./assets/menu-madera.webp');
+  background-position: center;
+  background-size: cover;
   background-attachment: fixed;
   color: var(--cream);
   font: 16px/1.45 var(--body);
@@ -117,15 +115,45 @@ h2 { font: 400 22px/1.2 var(--lettering); color: var(--gold); margin: 0 0 14px; 
 .team0 { border-left: 5px solid var(--sky); }
 .team1 { border-left: 5px solid var(--red-light); }
 
-/* ---- Inicio: fondo liso con luz cálida, y carteles en capas separadas ---- */
+/* ---- Placas pintadas: se estiran sin deformar las esquinas ---- */
+.plate-red, .plate-dark { border-style: solid; background: none; border-radius: 0; box-sizing: border-box; }
+.plate-red {
+  border-image: url('./assets/menu-boton.webp') 32 44 fill stretch;
+  border-width: var(--plate-red-y, 13px) var(--plate-red-x, 18px);
+  padding: 0 4px;
+  font: 700 var(--plate-font, 18px)/1 var(--body);
+  color: #f9eed6;
+  text-shadow: 0 1px 1px #3d0805, 0 2px 3px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  transition: filter 0.12s, transform 0.06s;
+}
+.plate-red:hover:not(:disabled) { background: none; filter: brightness(1.16) saturate(1.05); }
+.plate-red:active:not(:disabled) { transform: translateY(1px); filter: brightness(0.92); }
+.plate-red:focus-visible, .plate-dark:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+.plate-red:disabled { filter: grayscale(0.55) brightness(0.72); opacity: 1; }
+.plate-dark {
+  border-image: url('./assets/menu-campo.webp') 34 fill stretch;
+  border-width: var(--plate-dark, 14px);
+  padding: 0 2px;
+  color: var(--cream);
+  font-size: var(--plate-font, 17px);
+  outline-offset: 2px;
+}
+input.plate-dark::placeholder { font-style: italic; color: #b5a88f; }
+.plate-wide { width: 100%; }
+
+/* ---- Inicio: madera, cartel y paneles en capas; el texto y los controles son reales ---- */
 .stage {
+  --plate-red-y: 0.78cqw;
+  --plate-red-x: 1.05cqw;
+  --plate-dark: 0.84cqw;
+  --plate-font: 1.42cqw;
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   aspect-ratio: 1672 / 941;
-  /* Tope en el tamaño original de las capas: nunca se estiran, y así no se ven borrosas. */
-  width: min(100%, 1672px, calc(100vh * 1672 / 941));
+  width: min(100%, 2000px, calc(100vh * 1672 / 941));
   container-type: inline-size;
 }
 .stage .warn { position: absolute; top: 1%; left: 25%; width: 50%; text-align: center; font-size: 1.1cqw; z-index: 2; }
@@ -137,72 +165,69 @@ h2 { font: 400 22px/1.2 var(--lettering); color: var(--gold); margin: 0 0 14px; 
 .layer-far { --depth: -5px; }
 .layer-mid { --depth: 6px; }
 .layer-near { --depth: 11px; }
-.layer > img { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; filter: drop-shadow(0 14px 18px rgba(0, 0, 0, 0.6)) drop-shadow(0 3px 4px rgba(0, 0, 0, 0.5)); }
-.layer-near > img { filter: drop-shadow(0 22px 26px rgba(0, 0, 0, 0.65)) drop-shadow(0 4px 5px rgba(0, 0, 0, 0.5)); }
+.layer > img { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+.layer-far > img { filter: drop-shadow(0 1.1cqw 1.3cqw rgba(0, 0, 0, 0.62)) drop-shadow(0 0.2cqw 0.3cqw rgba(0, 0, 0, 0.5)); }
+.panel-art { filter: drop-shadow(0 1.1cqw 1.2cqw rgba(0, 0, 0, 0.6)) drop-shadow(0 0.2cqw 0.25cqw rgba(0, 0, 0, 0.55)); }
+.layer-near > .panel-art { filter: drop-shadow(0 1.6cqw 1.8cqw rgba(0, 0, 0, 0.65)) drop-shadow(0 0.25cqw 0.3cqw rgba(0, 0, 0, 0.55)); }
 @media (prefers-reduced-motion: reduce) { .layer { transform: none; transition: none; } }
-.art-input, .art-select, .art-button { position: absolute; margin: 0; }
-.art-input {
-  padding: 0 1.1cqw;
-  font-size: 1.45cqw;
-  font-style: italic;
-  background: linear-gradient(#141412, #23221f);
-  border: 2px solid #d9b873;
-  border-radius: 0.7cqw;
-  color: #f4e6c4;
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.8);
+
+.panel-body { position: absolute; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.panel-blue .panel-body { inset: 6% 10.5% 21% 10.5%; color: var(--cream); }
+.panel-cream .panel-body { inset: 5% 14% 13.5% 14%; color: #142a3b; }
+.panel-icon { height: 5.2cqw; width: auto; max-width: 100%; object-fit: contain; flex: none; filter: drop-shadow(0 0.15cqw 0.2cqw rgba(0, 0, 0, 0.55)); }
+.panel-body h2 {
+  font: 700 2.05cqw/1.08 var(--body);
+  letter-spacing: 0.015em;
+  text-transform: uppercase;
+  color: inherit;
+  margin: 0.35cqw 0 auto;
 }
-.art-input::placeholder { color: #a99f8c; }
-.art-select {
-  padding: 0 0.5cqw;
-  font-size: 1.55cqw;
-  text-align: center;
-  color: #152c3d;
-  background-color: #f1e6cb;
-  border: 1.5px solid #a18c63;
-  border-radius: 0.7cqw;
-  box-shadow: inset 0 1px 3px rgba(80, 55, 20, 0.35);
+.panel-blue h2 { text-shadow: 0 0.09cqw 0 #071521, 0 0.16cqw 0.35cqw rgba(0, 0, 0, 0.75); }
+.panel-cream h2 { font-size: 2.3cqw; text-shadow: 0 0.07cqw 0 rgba(255, 248, 225, 0.85); }
+.control-row { display: flex; gap: 0.4cqw; width: 100%; height: 3.6cqw; }
+.control-row input { flex: 1; min-width: 0; }
+.control-row button { flex: none; padding: 0; }
+.panel-body > .plate-wide { height: 3.6cqw; flex: none; }
+.selects { display: flex; gap: 0.8cqw; width: 100%; margin-bottom: 0.65cqw; }
+.selects > div { flex: 1; min-width: 0; }
+.selects label { margin: 0 0 0.15cqw; color: #142a3b; font-size: 1.08cqw; font-weight: 700; }
+.selects select {
+  width: 100%;
+  height: 2.5cqw;
+  padding: 0 0.3cqw;
+  font-size: 1.15cqw;
+  color: #142a3b;
+  background: #f6ecd2;
+  border: 1px solid #927b52;
+  border-radius: 0.4cqw;
+  box-shadow: inset 0 0.08cqw 0.2cqw rgba(70, 45, 15, 0.42), 0 0.05cqw 0 rgba(255, 250, 235, 0.8);
   cursor: pointer;
 }
-/* El botón ya está pintado en la imagen: esto solo agrega la respuesta al pasar y al enfocar. */
-.art-button { padding: 0; background: transparent; border: 0; border-radius: 0.8cqw; cursor: pointer; transition: background-color 0.12s, box-shadow 0.12s; }
-.art-pill { border-radius: 1.6cqw; }
-.art-button:hover:not(:disabled) { background: rgba(255, 225, 170, 0.14); box-shadow: 0 0 1.2cqw rgba(255, 205, 130, 0.45); }
-.art-button:active:not(:disabled) { background: rgba(0, 0, 0, 0.22); }
-.art-button:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
-.bar-strip {
-  display: flex;
-  align-items: center;
-  gap: 0.9cqw;
-  padding: 0.5cqw 1cqw;
-  font-size: 1.25cqw;
-  color: #f4e6c4;
-  background: linear-gradient(#20394c, #10222f);
-  border: 2px solid #ead6a6;
-  border-radius: 0.9cqw;
-  box-shadow: inset 0 0 0 2px #152c3d, inset 0 0 0 3px #b98f45, 0 0.5cqw 1.2cqw rgba(0, 0, 0, 0.6);
-}
-.bar-strip label { margin: 0; color: inherit; white-space: nowrap; font-size: inherit; }
-.bar-strip input { flex: 1; min-width: 0; height: 100%; padding: 0 0.8cqw; font-size: inherit; background: #101412; border-color: #a18c63; border-radius: 0.5cqw; }
-.bar-strip button { height: 100%; padding: 0 1.3cqw; white-space: nowrap; font-size: inherit; font-weight: 700; background: linear-gradient(#b92b20, #8e1d15); border: 1.5px solid #ead6a6; border-radius: 0.5cqw; color: #f8ecd2; }
-.bar-strip button:hover:not(:disabled) { background: linear-gradient(#cf3528, #a1241a); }
+.bar-strip { display: flex; align-items: center; gap: 0.7cqw; padding: 0 0.1cqw 0 0.4cqw; border-width: 0.52cqw 0.84cqw; font-size: var(--plate-font); }
+.bar-strip label { margin: 0; color: inherit; font-size: inherit; white-space: nowrap; }
+.bar-strip input { flex: 1; min-width: 0; height: 100%; padding: 0 0.6cqw; font-size: inherit; color: inherit; background: none; border: 0; border-left: 1px solid rgba(214, 166, 72, 0.5); border-radius: 0; }
+.bar-strip input:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.75); outline-offset: -2px; }
+.bar-strip button { flex: none; height: 100%; min-height: 0; padding: 0 0.3cqw; border-width: 0.45cqw 0.95cqw; white-space: nowrap; }
 .stage-error { position: absolute; margin: 0; text-align: center; font-size: 1.25cqw; color: #ffd0c6; text-shadow: 0 1px 3px #000, 0 0 6px #000; }
 
-/* ---- Salas públicas y sala de espera ---- */
+/* ---- Salas públicas y sala de espera, con el mismo panel ---- */
 .sign {
+  position: relative;
   text-align: center;
-  padding: 26px 30px;
   color: var(--cream);
-  background: linear-gradient(#1b3549, #10222f);
-  border: 3px solid #ead6a6;
-  border-radius: 14px;
-  box-shadow: inset 0 0 0 3px #152c3d, inset 0 0 0 5px #b98f45, 0 14px 40px rgba(0, 0, 0, 0.65);
+  background: url('./assets/menu-azul.webp') center / 100% 100% no-repeat;
+  border: 0;
+  padding: 66px 62px 96px;
+  filter: drop-shadow(0 16px 22px rgba(0, 0, 0, 0.62));
 }
-.sign h2 { font: 700 24px/1.1 var(--body); text-transform: uppercase; color: inherit; text-shadow: none; margin: 4px 0 14px; }
-.wide { width: 100%; }
-dialog.sign { width: min(460px, 92vw); margin: auto; }
+.sign h2 { font: 700 24px/1.1 var(--body); text-transform: uppercase; color: inherit; text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7); margin: 4px 0 14px; }
+.sign .plate-red { min-height: 50px; }
+dialog.sign { width: min(520px, 92vw); margin: auto; }
 dialog.sign::backdrop { background: rgba(0, 0, 0, 0.6); }
 dialog.sign form { margin-top: 12px; }
-.rooms-list { max-height: 44vh; overflow: auto; font-size: 15px; }
+.rooms-list { max-height: 40vh; overflow: auto; font-size: 15px; }
 .rooms-list button { width: 100%; margin-bottom: 7px; }
-.lobby .seat { background: rgba(10, 21, 30, 0.8); }
+.lobby .seat { background: rgba(8, 18, 28, 0.72); }
 .lobby .code { margin: 2px 0; }
+.lobby .row { justify-content: center; }
+.lobby .row .plate-red { --plate-font: 15px; padding: 0 2px; }

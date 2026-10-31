@@ -1,9 +1,14 @@
 import type { PublicRoom, RoomInfo, ServerMessage } from '../shared/protocol';
 import './style.css';
 import logoArt from './assets/menu-logo.webp?url';
-import joinArt from './assets/menu-entrar.webp?url';
-import createArt from './assets/menu-crear.webp?url';
-import roomsArt from './assets/menu-salas.webp?url';
+import logoArt2x from './assets/menu-logo-2x.webp?url';
+import blueArt from './assets/menu-azul.webp?url';
+import blueArt2x from './assets/menu-azul-2x.webp?url';
+import creamArt from './assets/menu-crema.webp?url';
+import creamArt2x from './assets/menu-crema-2x.webp?url';
+import peopleIcon from './assets/menu-icono-grupo.webp?url';
+import cardsIcon from './assets/menu-icono-cartas.webp?url';
+import globeIcon from './assets/menu-icono-mundo.webp?url';
 import { Connection } from './net';
 
 const app = document.getElementById('app')!;
@@ -38,12 +43,12 @@ function saveName(name: string): void {
 const ART_W = 1672;
 const ART_H = 941;
 type Box = readonly [left: number, top: number, right: number, bottom: number];
-const LOGO: Box = [401, 19, 1280, 409];
-const JOIN: Box = [179, 426, 580, 805];
-const CREATE: Box = [596, 425, 1093, 798];
-const ROOMS: Box = [1110, 426, 1489, 801];
-const STRIP: Box = [520, 812, 1152, 876];
-const ERROR: Box = [420, 882, 1252, 930];
+const LOGO: Box = [326, 8, 1346, 352];
+const JOIN: Box = [72, 372, 492, 790];
+const CREATE: Box = [514, 372, 1158, 790];
+const ROOMS: Box = [1180, 372, 1600, 790];
+const STRIP: Box = [486, 806, 1186, 872];
+const ERROR: Box = [420, 878, 1252, 930];
 const FULL: Box = [0, 0, ART_W, ART_H];
 
 const percent = (value: number, total: number) => `${((value / total) * 100).toFixed(3)}%`;
@@ -81,37 +86,54 @@ function showHome(error = ''): void {
     <main class="stage">
       ${isMobile() ? '<div class="warn">Por ahora Truco Online se juega en computadora, con mouse y teclado.</div>' : ''}
       <header class="layer layer-far" style="${at(LOGO)}">
-        <img src="${logoArt}" width="879" height="390" fetchpriority="high" alt="Truco Online" />
+        <img src="${logoArt}" srcset="${logoArt} 1200w, ${logoArt2x} 2172w" sizes="61cqw" width="1200" height="404" fetchpriority="high" alt="Truco Online" />
       </header>
-      <section class="layer layer-mid" style="${at(JOIN)}">
-        <img src="${joinArt}" width="401" height="379" alt="Entrar con código" />
-        <form id="join">
-          <input class="art-input" id="code" style="${at([220, 650, 431, 713], JOIN)}" inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="Código de sala" aria-label="Código de la sala" />
-          <button class="art-button" style="${at([439, 649, 547, 713], JOIN)}" type="submit" aria-label="Entrar"></button>
-        </form>
+      <section class="layer layer-mid panel panel-blue" style="${at(JOIN)}">
+        <img class="panel-art" src="${blueArt}" srcset="${blueArt} 500w, ${blueArt2x} 1000w" sizes="25cqw" alt="" />
+        <div class="panel-body">
+          <img class="panel-icon" src="${peopleIcon}" alt="" />
+          <h2>Entrar<br />con código</h2>
+          <form id="join" class="control-row">
+            <input class="plate-dark" id="code" inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="Código de sala" aria-label="Código de la sala" />
+            <button class="plate-red" type="submit">Entrar</button>
+          </form>
+        </div>
       </section>
-      <section class="layer layer-near" style="${at(CREATE)}">
-        <img src="${createArt}" width="497" height="373" alt="Crear sala" />
-        <select class="art-select" id="players" style="${at([640, 652, 765, 698], CREATE)}" aria-label="Jugadores"><option value="2">2</option><option value="4" selected>4</option><option value="6">6</option></select>
-        <select class="art-select" id="target" style="${at([782, 652, 907, 698], CREATE)}" aria-label="Puntos"><option value="30" selected>30</option><option value="15">15</option></select>
-        <select class="art-select" id="visibility" style="${at([924, 652, 1051, 698], CREATE)}" aria-label="Sala privada"><option value="private" selected>Sí</option><option value="public">No</option></select>
-        <button class="art-button art-pill" id="create" style="${at([670, 713, 1018, 771], CREATE)}" aria-label="Crear sala"></button>
+      <section class="layer layer-near panel panel-cream" style="${at(CREATE)}">
+        <img class="panel-art" src="${creamArt}" srcset="${creamArt} 740w, ${creamArt2x} 1400w" sizes="39cqw" alt="" />
+        <div class="panel-body">
+          <img class="panel-icon" src="${cardsIcon}" alt="" />
+          <h2>Crear sala</h2>
+          <div class="selects">
+            <div><label for="players">Jugadores</label>
+              <select id="players"><option value="2">2</option><option value="4" selected>4</option><option value="6">6</option></select></div>
+            <div><label for="target">Puntos</label>
+              <select id="target"><option value="30" selected>30</option><option value="15">15</option></select></div>
+            <div><label for="visibility">Sala</label>
+              <select id="visibility"><option value="private" selected>Privada</option><option value="public">Pública</option></select></div>
+          </div>
+          <button class="plate-red plate-wide" id="create">Crear</button>
+        </div>
       </section>
-      <section class="layer layer-mid" style="${at(ROOMS)}">
-        <img src="${roomsArt}" width="379" height="375" alt="Salas públicas" />
-        <button class="art-button" id="open-rooms" style="${at([1156, 658, 1448, 723], ROOMS)}" aria-label="Ver salas públicas"></button>
+      <section class="layer layer-mid panel panel-blue" style="${at(ROOMS)}">
+        <img class="panel-art" src="${blueArt}" srcset="${blueArt} 500w, ${blueArt2x} 1000w" sizes="25cqw" alt="" />
+        <div class="panel-body">
+          <img class="panel-icon" src="${globeIcon}" alt="" />
+          <h2>Salas<br />públicas</h2>
+          <button class="plate-red plate-wide" id="open-rooms">Ver salas</button>
+        </div>
       </section>
-      <div class="layer layer-near bar-strip" style="${at(STRIP)}">
+      <div class="layer layer-near plate-dark bar-strip" style="${at(STRIP)}">
         <label for="name">Tu nombre</label>
         <input id="name" maxlength="16" placeholder="Invitado" value="${escapeHtml(readName())}" />
-        <button id="quick">Jugar ya</button>
+        <button class="plate-red" id="quick">Jugar ya</button>
       </div>
       <p class="stage-error" id="error" role="alert" style="${at(ERROR)}">${escapeHtml(error)}</p>
     </main>
-    <dialog id="rooms-dialog" class="sign sign-navy">
+    <dialog id="rooms-dialog" class="sign">
       <h2>Salas públicas</h2>
       <div id="rooms" class="rooms-list">Buscando...</div>
-      <form method="dialog"><button class="wide">Cerrar</button></form>
+      <form method="dialog"><button class="plate-red plate-wide">Cerrar</button></form>
     </dialog>`;
   document.getElementById('open-rooms')!.addEventListener('click', () => {
     (document.getElementById('rooms-dialog') as HTMLDialogElement).showModal();
@@ -258,16 +280,16 @@ function showLobby(room: RoomInfo, you: number, conn: Connection, leave: () => v
       : '<p class="muted">Si no se completa en unos segundos, los lugares vacíos se llenan con bots.</p>';
   app.innerHTML = `
     <main class="page" style="max-width:560px">
-      <div class="sign sign-navy lobby">
+      <div class="sign lobby">
       <p class="muted" style="text-align:center;margin-top:0">${room.public ? 'Mesa pública' : 'Mesa privada'} para ${room.players}, a ${room.target} puntos</p>
       <div class="code" aria-label="Código de la sala">${room.code}</div>
       <p class="muted" style="text-align:center">Pasales este código a los demás. Los colores marcan los equipos.</p>
       <div class="stack">${seats}</div>
       ${fillNote}
       <div class="row" style="margin-top:16px;flex-wrap:wrap">
-        ${isHost ? `<button class="primary" id="start" ${full ? '' : 'disabled'}>Empezar</button>` : '<span class="muted">Esperando a que empiece quien creó la sala</span>'}
-        ${isHost && !full ? '<button id="fill">Completar con bots</button>' : ''}
-        <button id="leave">Salir</button>
+        ${isHost ? `<button class="plate-red" id="start" ${full ? '' : 'disabled'}>Empezar</button>` : '<span class="muted">Esperando a que empiece quien creó la sala</span>'}
+        ${isHost && !full ? '<button class="plate-red" id="fill">Completar con bots</button>' : ''}
+        <button class="plate-red" id="leave">Salir</button>
       </div>
       <p class="error" id="error" role="alert"></p>
       </div>

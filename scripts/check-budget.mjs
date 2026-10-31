@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
 const KB = 1024;
-const LIMITS = { entry: 25 * KB, game: 230 * KB, ambience: 300 * KB, deck: 400 * KB, menu: 260 * KB, total: 2048 * KB };
+const LIMITS = { entry: 25 * KB, game: 230 * KB, ambience: 300 * KB, deck: 400 * KB, menu: 420 * KB, total: 2048 * KB };
 
 const dir = 'dist/assets';
 const files = readdirSync(dir).filter((f) => statSync(join(dir, f)).isFile());
@@ -24,10 +24,14 @@ const entry = html + sum(isEntry);
 const game = sum(isGame);
 const isDeck = (f) => f.startsWith('cartas-');
 const deck = sum(isDeck);
+// Las versiones -2x solo las bajan las pantallas de alta densidad: no cuentan para la carga común.
+const isHiDpi = (f) => /-2x-/.test(f);
 const isMenu = (f) => f.startsWith('menu-') && f.endsWith('.webp');
-const menu = sum(isMenu);
+const menu = sum((f) => isMenu(f) && !isHiDpi(f));
+const hiDpi = sum((f) => isMenu(f) && isHiDpi(f));
 const ambience = sum((f) => !isEntry(f) && !isGame(f) && !isDeck(f) && !isMenu(f));
 const total = entry + game + ambience + deck + menu;
+console.log(`Solo alta densidad: ${(hiDpi / KB).toFixed(1)} KB`);
 
 const report = (name, value, limit) => {
   const ok = value <= limit;

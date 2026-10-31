@@ -1,85 +1,80 @@
-# Recorta el cartel y los paneles de design/menu/inicio.webp, con fondo transparente.
+# Recorta y comprime las imágenes de design/menu para el inicio.
 # Uso: python scripts/build-menu.py  (necesita opencv-python-headless y numpy)
 import cv2
 import numpy as np
 from pathlib import Path
 
-SOURCE = Path("design/menu/inicio.webp")
+SOURCE = Path("design/menu")
 OUT = Path("src/client/assets")
+QUALITY = 76
 
-# (nombre, izquierda, arriba, derecha, abajo, eje de simetría x, simétrica también en vertical)
-# en píxeles de la imagen original. Las piezas son simétricas: cada lado completa al otro
-# donde el borde se confunde con el fondo, como el cartel contra la pared clara.
-LAYERS = [
-    ("menu-logo", 398, 8, 1284, 410, 840, False),
-    ("menu-entrar", 178, 426, 580, 804, 379, True),
-    ("menu-crear", 588, 424, 1100, 806, 844, True),
-    ("menu-salas", 1110, 426, 1488, 804, 1299, True),
+# (origen, destino, anchos a generar). Los anchos dobles son para pantallas de alta densidad.
+CUTOUTS = [
+    ("cartel.png", "menu-logo", {"": 1200, "-2x": 2172}),
+    ("panel-azul.png", "menu-azul", {"": 500, "-2x": 1000}),
+    ("panel-crema.png", "menu-crema", {"": 740, "-2x": 1400}),
+    ("boton-rojo.png", "menu-boton", {"": 548}),
+    ("campo.png", "menu-campo", {"": 744}),
+    ("icono-grupo.png", "menu-icono-grupo", {"": 300}),
+    ("icono-cartas.png", "menu-icono-cartas", {"": 300}),
+    ("icono-mundo.png", "menu-icono-mundo", {"": 300}),
 ]
-MARGIN = 6
 
 
-def symmetric(mask, axis, vertical):
-    height, width = mask.shape
-    flipped = np.zeros_like(mask)
-    xs = np.arange(width)
-    mirror = 2 * axis - xs
-    valid = (mirror >= 0) & (mirror < width)
-    flipped[:, xs[valid]] = mask[:, mirror[valid]]
-    result = cv2.bitwise_or(mask, flipped)
-    if vertical:
-        ys, _ = np.where(result > 0)
-        center = (ys.min() + ys.max()) // 2
-        rows = np.arange(height)
-        mirrored = 2 * center - rows
-        valid_rows = (mirrored >= 0) & (mirrored < height)
-        down = np.zeros_like(result)
-        down[rows[valid_rows], :] = result[mirrored[valid_rows], :]
-        # La mitad de abajo tiene el borde más fiel: se recorta al cruce para no sumar fondo.
-        result = cv2.bitwise_and(result, down)
-    return result
+def read(path):
+    return cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)
 
 
-def cut(image, left, top, right, bottom, axis, vertical):
-    x0, y0 = max(0, left - 30), max(0, top - 30)
-    x1, y1 = min(image.shape[1], right + 30), min(image.shape[0], bottom + 30)
-    crop = image[y0:y1, x0:x1]
-    mask = np.full(crop.shape[:2], cv2.GC_BGD, np.uint8)
-    # Todo lo que está dentro del recuadro es "probablemente" el cartel; el centro, seguro.
-    mask[top - y0 : bottom - y0, left - x0 : right - x0] = cv2.GC_PR_FGD
-    h, w = bottom - top, right - left
-    mask[top - y0 + h // 6 : bottom - y0 - h // 6, left - x0 + w // 6 : right - x0 - w // 6] = cv2.GC_FGD
-    back, fore = np.zeros((1, 65)), np.zeros((1, 65))
-    cv2.grabCut(crop, mask, None, back, fore, 8, cv2.GC_INIT_WITH_MASK)
-    solid = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+def from_edges(background):
+    """Fondo real: lo conectado con el borde. Evita perforar colores parecidos del interior."""
+    height, width = background.shape
+    flood = background.astype(np.uint8) * 255
+    mask = np.zeros((height + 2, width + 2), np.uint8)
+    points = [(x, y) for x in range(0, width, 4) for y in (0, height - 1)]
+    points += [(x, y) for y in range(0, height, 4) for x in (0, width - 1)]
+    for x, y in points:
+        if flood[y, x] == 255:
+            cv2.floodFill(flood, mask, (x, y), 128)
+    return (flood != 128).astype(np.uint8) * 255
 
-    # Se queda con la pieza principal y rellena huecos: el interior del cartel nunca es transparente.
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(solid)
-    biggest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-    solid = np.where(labels == biggest, 255, 0).astype(np.uint8)
-    contours, _ = cv2.findContours(solid, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    solid = cv2.drawContours(np.zeros_like(solid), contours, -1, 255, cv2.FILLED)
-    solid = symmetric(solid, axis - x0, vertical)
+
+def cut(image, light_background):
+    b, g, r = [image[:, :, channel].astype(np.int16) for channel in range(3)]
+    if light_background:
+        background = (b > 232) & (g > 232) & (r > 232)
+    else:
+        background = (r > 135) & (b > 135) & (g < 115) & (r - g > 60) & (b - g > 60)
+    solid = from_edges(background)
     solid = cv2.morphologyEx(solid, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-    solid = cv2.erode(solid, np.ones((2, 2), np.uint8))
-    alpha = cv2.GaussianBlur(solid, (3, 3), 0)
-
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(solid)
+    solid = np.where(labels == 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA])), 255, 0).astype(np.uint8)
+    inner = cv2.erode(solid, np.ones((3, 3), np.uint8), iterations=2)
+    # El borde arrastra tinte del fondo: se repinta con el color del interior antes de recortar.
+    band = cv2.subtract(cv2.dilate(solid, np.ones((5, 5), np.uint8)), cv2.erode(inner, np.ones((3, 3), np.uint8)))
+    colors = cv2.inpaint(image, band, 3, cv2.INPAINT_TELEA)
+    alpha = cv2.GaussianBlur(inner, (3, 3), 0)
     ys, xs = np.where(alpha > 8)
-    bx0, bx1 = max(0, xs.min() - MARGIN), min(alpha.shape[1], xs.max() + MARGIN)
-    by0, by1 = max(0, ys.min() - MARGIN), min(alpha.shape[0], ys.max() + MARGIN)
-    rgba = np.dstack((crop, alpha))[by0:by1, bx0:bx1]
-    return rgba, (x0 + bx0, y0 + by0, x0 + bx1, y0 + by1)
+    return np.dstack((colors, alpha))[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
+
+
+def save(image, name, quality=QUALITY):
+    ok, data = cv2.imencode(".webp", image, [cv2.IMWRITE_WEBP_QUALITY, quality])
+    assert ok
+    data.tofile(OUT / f"{name}.webp")
+    print(f"{name}: {image.shape[1]}x{image.shape[0]}, {len(data) // 1024} KB")
 
 
 def main():
-    image = cv2.imdecode(np.fromfile(SOURCE, np.uint8), cv2.IMREAD_COLOR)
     OUT.mkdir(parents=True, exist_ok=True)
-    for name, left, top, right, bottom, axis, vertical in LAYERS:
-        rgba, box = cut(image, left, top, right, bottom, axis, vertical)
-        ok, data = cv2.imencode(".webp", rgba, [cv2.IMWRITE_WEBP_QUALITY, 92])
-        assert ok
-        data.tofile(OUT / f"{name}.webp")
-        print(f"{name}: caja {tuple(int(v) for v in box)}, {rgba.shape[1]}x{rgba.shape[0]}, {len(data) // 1024} KB")
+    for source, name, widths in CUTOUTS:
+        rgba = cut(read(SOURCE / source), source == "cartel.png")
+        for suffix, width in widths.items():
+            width = min(width, rgba.shape[1])
+            height = round(rgba.shape[0] * width / rgba.shape[1])
+            resized = cv2.resize(rgba, (width, height), interpolation=cv2.INTER_AREA)
+            save(resized, name + suffix)
+    wood = read(SOURCE / "madera.png")
+    save(cv2.resize(wood, (1600, 1067), interpolation=cv2.INTER_CUBIC), "menu-madera", 52)
 
 
 main()
