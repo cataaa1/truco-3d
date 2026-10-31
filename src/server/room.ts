@@ -241,14 +241,24 @@ export class Room extends DurableObject<Env> {
     };
     for (let seat = 0; seat < data.players; seat++) {
       if (!data.seats[seat]?.bot || now - this.lastSena[seat]! < SENA_MS + 800) continue;
-      const partner = humans.find((h) => teamOf(h) === teamOf(seat) && sees(h, seat));
-      if (partner === undefined || humans.some((h) => teamOf(h) !== teamOf(seat) && sees(h, seat))) continue;
+      const teamHumans = humans.filter((h) => teamOf(h) === teamOf(seat));
+      let partner = teamHumans.find((h) => sees(h, seat));
+      if (teamHumans.length > 0) {
+        // Con un humano de compañero espera a que lo mire y a que ningún rival lo esté mirando.
+        if (partner === undefined || humans.some((h) => teamOf(h) !== teamOf(seat) && sees(h, seat))) continue;
+      } else {
+        // Un equipo de bots también se hace señas entre sí, a la vista de quien los mire.
+        if (!humans.some((h) => sees(h, seat))) continue;
+        partner = Array.from({ length: data.players }, (_, i) => i).find((i) => i !== seat && teamOf(i) === teamOf(seat));
+        if (partner === undefined) continue;
+      }
       const done = this.botSenasDone.get(seat) ?? new Set<SenaId>();
       const id = botSena(game, seat, done);
       if (!id) continue;
       done.add(id);
       this.botSenasDone.set(seat, done);
       this.lastSena[seat] = now;
+      if (id === 'envido' && teamHumans.length === 0) this.envidoHints.add(teamOf(seat));
       // Mira a su compañero mientras hace el gesto; los demás pueden notar hacia dónde mira.
       const y = Math.round(bearingTo(seat, partner, data.players) * 100) / 100;
       this.gaze[seat] = { y, p: 0 };

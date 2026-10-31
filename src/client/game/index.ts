@@ -222,7 +222,7 @@ export function mountGame(
   }
 
   const handReason = (reason: string) =>
-    reason === 'rejected' ? 'No quisieron el truco: se termina la mano. ' : reason === 'mazo' ? 'Se fueron al mazo. ' : '';
+    reason === 'mazo' ? 'Se fueron al mazo. ' : '';
 
   const teamLabel = (team: number) => (team === teamOf(me) ? 'nosotros' : 'ellos');
 

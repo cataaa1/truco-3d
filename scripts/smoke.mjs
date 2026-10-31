@@ -94,7 +94,7 @@ check('el rival distraído no recibe nada', !got(d));
 check('quien la hizo no se la recibe', !got(a));
 
 // Entra al cono durante la seña.
-await sleep(900);
+await sleep(1700);
 for (const p of players) p.inbox.length = 0;
 d.send({ t: 'gaze', y: -1.1, p: 0 });
 await sleep(100);
@@ -154,7 +154,7 @@ human.send({ t: 'gaze', y: 0.785, p: 0 });
 await sleep(150);
 human.send({ t: 'gaze', y: 0.01, p: -0.8 });
 await sleep(2200);
-check('sin mirarlo no llega ninguna seña', !human.inbox.some((m) => m.t === 'sena'));
+check('sin mirarlo no llega ninguna seña', !human.inbox.some((m) => m.t === 'sena' && m.s === (human.seat + 2) % 4));
 human.ws.close();
 
 // --- El bot canta envido cuando su compañero le hace la seña ---

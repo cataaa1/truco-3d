@@ -40,7 +40,12 @@ export function botAction(
       if (open) return open;
     }
     if (has('truco') && power >= 11 && random() < 0.5) return { t: 'truco' };
-    return power >= 7.5 || random() < 0.12 ? { t: 'quiero' } : { t: 'noquiero' };
+    // Pesa la mejor carta que le queda y cómo viene la mano; a veces acepta de farol.
+    const best = Math.max(...remaining.map(strength), 0);
+    const won = hand.roundWinners.filter((w) => w === teamOf(seat)).length;
+    const lost = hand.roundWinners.filter((w) => w !== null && w !== teamOf(seat)).length;
+    const want = best * 0.6 + power * 0.4 + (won - lost) * 2;
+    return want >= 8 || random() < 0.25 ? { t: 'quiero' } : { t: 'noquiero' };
   }
 
   if (hand.turn !== seat) return null;
