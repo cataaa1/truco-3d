@@ -22,6 +22,7 @@ import {
   ShaderMaterial,
   SphereGeometry,
   SRGBColorSpace,
+  Texture,
   Vector3,
   WebGLRenderer,
   BackSide,
@@ -31,6 +32,13 @@ import type { PlayerView } from '../../engine/game';
 import { MAX_PITCH, MAX_YAW, MIN_PITCH } from '../../shared/protocol';
 import { BACK_SLOT, buildCardAtlas, buildFaceAtlas, CARD_GRID, FACE_GRID, NEUTRAL_FACE } from './atlas';
 import { appearanceFor, characterMaterial, setCharacterInstances } from './characters';
+import cardArtUrl from './assets/cartas.webp?url';
+
+// El mazo empieza a bajar apenas carga este módulo, que se pide desde la pantalla de inicio.
+const cardArt = new Image();
+cardArt.src = cardArtUrl;
+const cardArtReady = cardArt.decode();
+cardArtReady.catch(() => {});
 
 const EYE_HEIGHT = 1.18;
 const TABLE_Y = 0.74;
@@ -62,8 +70,9 @@ const FRAGMENT = /* glsl */ `
   }`;
 
 /** Muchos rectángulos con la misma textura, en una sola llamada de dibujo. */
-function atlasQuads(canvas: HTMLCanvasElement, cols: number, rows: number, count: number, anisotropy: number, shape?: PlaneGeometry) {
-  const texture = new CanvasTexture(canvas);
+function atlasQuads(canvas: HTMLCanvasElement | HTMLImageElement, cols: number, rows: number, count: number, anisotropy: number, shape?: PlaneGeometry) {
+  const texture = new Texture(canvas);
+  texture.needsUpdate = true;
   texture.colorSpace = SRGBColorSpace;
   texture.minFilter = LinearMipmapLinearFilter;
   texture.anisotropy = anisotropy;
@@ -173,8 +182,11 @@ export class TableScene {
     this.buildRoom(tableRadius);
 
     const anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
-    this.cards = atlasQuads(buildCardAtlas(), CARD_GRID.cols, CARD_GRID.rows, 40, anisotropy);
+    // Si el mazo todavía no llegó se usan las cartas dibujadas por código, y se cambian al llegar.
+    const artLoaded = cardArt.complete && cardArt.naturalWidth > 0;
+    this.cards = atlasQuads(artLoaded ? cardArt : buildCardAtlas(), CARD_GRID.cols, CARD_GRID.rows, 40, anisotropy);
     this.scene.add(this.cards.mesh);
+    if (!artLoaded) void cardArtReady.then(() => this.useCardArt(anisotropy)).catch(() => {});
 
     const others = players - 1;
     this.heads = Array.from({ length: players }, () => ({
@@ -209,6 +221,19 @@ export class TableScene {
     this.resize();
     // Compila los shaders antes del primer cuadro para que no haya un tirón.
     void this.renderer.compileAsync(this.scene, this.camera).then(() => this.invalidate());
+  }
+
+  private useCardArt(anisotropy: number): void {
+    if (this.disposed) return;
+    const texture = new Texture(cardArt);
+    texture.needsUpdate = true;
+    texture.colorSpace = SRGBColorSpace;
+    texture.minFilter = LinearMipmapLinearFilter;
+    texture.anisotropy = anisotropy;
+    (this.cards.mesh.material as ShaderMaterial).uniforms.uMap!.value = texture;
+    this.cards.texture.dispose();
+    this.cards.texture = texture;
+    this.invalidate();
   }
 
   private keyLight(): DirectionalLight {

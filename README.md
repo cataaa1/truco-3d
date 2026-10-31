@@ -41,6 +41,7 @@ npm run deploy
 - `npm test`: reglas, parda, envido, visión de señas y miles de jugadas simuladas.
 - `npm run smoke`: partida real por WebSocket contra `npm run dev`.
 - `npm run typecheck`: tipos del cliente y del servidor.
+- `npm run cards`: recorta las láminas de `design/cartas` y arma el mazo del juego.
 - `npm run models`: regenera con Blender los modelos 3D desde `scripts/blender`.
 - `npm run build`: build del cliente. Falla si se pasan los límites de tamaño.
 
