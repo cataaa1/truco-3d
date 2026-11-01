@@ -3,4 +3,5 @@ dist
 .wrangler
 *.log
 .dev.vars
+.env
 scripts/blender/.out
