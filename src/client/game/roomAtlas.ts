@@ -182,14 +182,33 @@ function drawPortrait(ctx: Ctx, w: number, h: number): void {
   ctx.fill();
 }
 
+/** Camiseta celeste y blanca enmarcada, con la 10 en la espalda. */
 function drawLandscape(ctx: Ctx, w: number, h: number): void {
-  ctx.fillStyle = '#b89a64';
+  ctx.fillStyle = '#20252b';
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = '#8a6d3e';
-  ctx.fillRect(0, h * 0.62, w, h * 0.38);
-  ctx.fillStyle = '#4a3820';
-  for (let i = 0; i < 6; i++) ctx.fillRect(w * (0.08 + i * 0.15), h * (0.3 + (i % 2) * 0.06), w * 0.12, h * 0.34);
-  ctx.fillRect(w * 0.42, h * 0.14, w * 0.05, h * 0.2);
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(w * 0.36, h * 0.13);
+  ctx.quadraticCurveTo(w * 0.5, h * 0.2, w * 0.64, h * 0.13);
+  ctx.lineTo(w * 0.92, h * 0.3);
+  ctx.lineTo(w * 0.82, h * 0.45);
+  ctx.lineTo(w * 0.72, h * 0.4);
+  ctx.lineTo(w * 0.72, h * 0.9);
+  ctx.lineTo(w * 0.28, h * 0.9);
+  ctx.lineTo(w * 0.28, h * 0.4);
+  ctx.lineTo(w * 0.18, h * 0.45);
+  ctx.lineTo(w * 0.08, h * 0.3);
+  ctx.closePath();
+  ctx.clip();
+  ctx.fillStyle = '#f4f2ec';
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#74acdf';
+  for (let i = 0; i < 5; i++) ctx.fillRect(w * (0.12 + i * 0.18), 0, w * 0.09, h);
+  ctx.restore();
+  ctx.fillStyle = '#14100c';
+  ctx.font = '700 72px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('10', w / 2, h * 0.66);
 }
 
 function drawClock(ctx: Ctx, w: number): void {
@@ -455,18 +474,38 @@ function drawSmallSign(ctx: Ctx, w: number, h: number): void {
   lettering(ctx, 'mentir sin gracia', w / 2, 158, 40, sky, '#1c5a7c', black, 430);
 }
 
+/** Ventana a la calle de noche, con el nombre del bar pintado en dorado sobre el vidrio. */
 function drawGlass(ctx: Ctx, w: number, h: number, word: string, tint: string): void {
-  const gradient = ctx.createLinearGradient(0, 0, 0, h);
-  gradient.addColorStop(0, '#f3ead0');
-  gradient.addColorStop(1, '#d5cdb2');
-  ctx.fillStyle = gradient;
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, '#101c2e');
+  sky.addColorStop(0.6, '#26364a');
+  sky.addColorStop(1, '#3d3a38');
+  ctx.fillStyle = sky;
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = tint;
-  ctx.fillRect(16, 16, w - 32, 54);
-  ctx.fillRect(16, h - 70, w - 32, 54);
-  scroll(ctx, 30, 58, 58, 1, FILETE.gold, '#3a2410');
-  scroll(ctx, w - 30, 58, 58, -1, FILETE.gold, '#3a2410');
-  lettering(ctx, word, w / 2, h / 2 + 4, 118, tint, FILETE.gold, FILETE.black, w - 60);
+  const random = seeded(word.length * 37 + 5);
+  // Frente de enfrente, con algunas ventanas encendidas.
+  ctx.fillStyle = '#141a22';
+  ctx.fillRect(0, h * 0.42, w, h * 0.58);
+  for (let i = 0; i < 26; i++) {
+    ctx.fillStyle = random() < 0.4 ? '#d9b24a' : '#232c38';
+    ctx.fillRect(14 + (i % 9) * (w / 9), h * 0.47 + Math.floor(i / 9) * 44, 24, 30);
+  }
+  // Faroles de la vereda, fuera de foco.
+  for (const [x, y, size] of [[w * 0.2, h * 0.36, 70], [w * 0.8, h * 0.3, 90]] as const) {
+    const glow = ctx.createRadialGradient(x, y, 2, x, y, size);
+    glow.addColorStop(0, 'rgba(255,224,160,.95)');
+    glow.addColorStop(0.18, 'rgba(255,200,120,.45)');
+    glow.addColorStop(1, 'rgba(255,190,110,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.textAlign = 'center';
+  ctx.font = '400 92px Rye, Georgia, serif';
+  ctx.lineWidth = 7;
+  ctx.strokeStyle = tint;
+  ctx.strokeText(word, w / 2, 118, w - 60);
+  ctx.fillStyle = FILETE.gold;
+  ctx.fillText(word, w / 2, 118, w - 60);
 }
 
 function drawPoster(ctx: Ctx, w: number, h: number): void {
@@ -516,9 +555,9 @@ function drawTin(ctx: Ctx, w: number): void {
 
 /** Empapelado antiguo con un adamascado de dos tonos. */
 function drawWallpaper(ctx: Ctx, w: number): void {
-  ctx.fillStyle = '#7d3a2c';
+  ctx.fillStyle = '#a4553f';
   ctx.fillRect(0, 0, w, w);
-  ctx.fillStyle = '#92493a';
+  ctx.fillStyle = '#bb6b52';
   const motif = (x: number, y: number, size: number) => {
     ctx.save();
     ctx.translate(x, y);
@@ -534,9 +573,9 @@ function drawWallpaper(ctx: Ctx, w: number): void {
     ctx.restore();
   };
   for (const [x, y] of [[64, 64], [192, 192], [-64, 192], [320, 64], [64, 320], [192, -64]] as const) motif(x, y, 54);
-  ctx.fillStyle = '#7d3a2c';
+  ctx.fillStyle = '#a4553f';
   for (const [x, y] of [[64, 64], [192, 192]] as const) motif(x, y, 22);
-  ctx.fillStyle = '#a05a48';
+  ctx.fillStyle = '#c67a60';
   for (const [x, y] of [[192, 64], [64, 192]] as const) {
     ctx.beginPath();
     ctx.arc(x, y, 7, 0, Math.PI * 2);
@@ -564,7 +603,7 @@ function drawChalkboard(ctx: Ctx, w: number, h: number): void {
   ctx.fillText('HOY', w / 2, 52);
   ctx.fillStyle = '#e8e2cc';
   ctx.font = 'italic 30px Georgia, serif';
-  const lines = ['Vermú con soda', 'Ginebra de la casa', 'Café en jarrito', 'Picada para la mesa'];
+  const lines = ['Fernet con coca', 'Vermú con soda', 'Empanadas de carne', 'Choripán al pan'];
   lines.forEach((line, i) => ctx.fillText(line, w / 2, 100 + i * 39));
   ctx.strokeStyle = '#d9c98f';
   ctx.lineWidth = 3;
@@ -654,8 +693,43 @@ function drawDial(ctx: Ctx, w: number, h: number): void {
   ctx.fillText('ONDA LARGA', w / 2, 104);
 }
 
-/** Texturas del boliche. Se generan en el navegador: no se descargan. */
-export function buildRoomAtlas(): HTMLCanvasElement {
+/** Dicho pintado con letra de cartel antiguo. */
+function drawDicho(ctx: Ctx, w: number, h: number, text: string, ground: string, band: string, ink: string): void {
+  signFrame(ctx, w, h, ground, band, FILETE.black);
+  lettering(ctx, text, w / 2, h / 2 + 10, 30, ink, FILETE.gold, FILETE.black, w - 70);
+}
+
+/** Etiquetas de fernet y yerba, sin ninguna marca real. */
+function drawLabels2(ctx: Ctx, w: number, h: number): void {
+  const half = w / 2;
+  ctx.fillStyle = '#efe6cf';
+  ctx.fillRect(0, 0, half, h);
+  ctx.fillStyle = '#7a1f1a';
+  ctx.fillRect(0, 0, half, 22);
+  ctx.fillRect(0, h - 22, half, 22);
+  ctx.fillStyle = '#14100c';
+  ctx.textAlign = 'center';
+  ctx.font = '400 24px Rye, Georgia, serif';
+  ctx.fillText('FERNET', half / 2, h / 2 + 8);
+  ctx.fillStyle = '#2f7d3a';
+  ctx.fillRect(half, 0, half, h);
+  ctx.fillStyle = '#f4e6c4';
+  ctx.font = '400 30px Rye, Georgia, serif';
+  ctx.fillText('YERBA', half * 1.5, h / 2 - 2);
+  ctx.font = 'italic 18px Georgia, serif';
+  ctx.fillText('con palo', half * 1.5, h / 2 + 26);
+}
+
+const PHOTO_REGIONS = [
+  { name: 'brick', x: 0, y: 0, w: 512, h: 512 },
+  { name: 'table', x: 512, y: 0, w: 512, h: 512 },
+  { name: 'wood', x: 0, y: 512, w: 512, h: 256 },
+  { name: 'wood_dark', x: 0, y: 768, w: 512, h: 256 },
+  { name: 'plaster', x: 512, y: 512, w: 256, h: 256 },
+] as const;
+
+/** Texturas del boliche: las pinturas se generan en el navegador y las maderas y el ladrillo son fotos. */
+export function buildRoomAtlas(photos?: HTMLImageElement): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = layout.size;
   const ctx = canvas.getContext('2d')!;
@@ -700,5 +774,13 @@ export function buildRoomAtlas(): HTMLCanvasElement {
   within(ctx, 'photos', (w) => drawPhotos(ctx, w));
   within(ctx, 'calendar', (w, h) => drawCalendar(ctx, w, h));
   within(ctx, 'dial', (w, h) => drawDial(ctx, w, h));
+  within(ctx, 'dicho_a', (w, h) => drawDicho(ctx, w, h, 'Hoy no se fía, mañana sí', FILETE.cream, FILETE.red, FILETE.red));
+  within(ctx, 'dicho_b', (w, h) => drawDicho(ctx, w, h, 'Truco, mate y vino', FILETE.black, FILETE.sky, FILETE.cream));
+  within(ctx, 'etiquetas', (w, h) => drawLabels2(ctx, w, h));
+  if (photos) {
+    for (const { name, x, y, w, h } of PHOTO_REGIONS) {
+      within(ctx, name, (rw, rh) => ctx.drawImage(photos, x, y, w, h, 0, 0, rw, rh));
+    }
+  }
   return canvas;
 }

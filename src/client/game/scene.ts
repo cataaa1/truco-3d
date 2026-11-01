@@ -70,8 +70,18 @@ const HALOS: readonly (readonly [number, number, number, number])[] = [
   [-2.75, 2.26, 1.6, 0.7],
   [2.75, 2.26, 2.6, 0.7],
   [-2.8, 2.26, -0.4, 0.7],
-  [2.85, 2.26, 0.45, 0.7],
+  [-3.42, 2.2, -0.82, 0.7],
+  [-3.42, 2.2, 0.925, 0.7],
 ];
+
+// Rango guardado en la imagen de luz: coincide con LIGHT_RANGE de boliche.py.
+const LIGHT_RANGE = 2;
+
+function loadImage(url: string): Promise<HTMLImageElement> {
+  const image = new Image();
+  image.src = url;
+  return image.decode().then(() => image);
+}
 
 const HEAD_SHAPE = { x: 0.165, y: 0.175, z: 0.165 };
 const TAG_HEIGHT = 0.36;
@@ -177,6 +187,7 @@ export class TableScene {
   private lastTime = 0;
   private disposed = false;
   private roomTexture: CanvasTexture | null = null;
+  private lightTexture: Texture | null = null;
   private readonly resizeObserver: ResizeObserver;
 
   constructor(
@@ -282,32 +293,48 @@ export class TableScene {
   }
 
   private async loadBoliche(tableRadius: number, placeholders: Mesh[]): Promise<void> {
-    const [{ GLTFLoader }, { MeshoptDecoder }, { default: url }, { buildRoomAtlas }] = await Promise.all([
+    const [{ GLTFLoader }, { MeshoptDecoder }, { default: url }, { buildRoomAtlas }, { default: lightUrl }, { default: photosUrl }] = await Promise.all([
       import('three/addons/loaders/GLTFLoader.js'),
       import('three/addons/libs/meshopt_decoder.module.js'),
       import('./assets/boliche.glb?url'),
       import('./roomAtlas'),
+      import('./assets/luz.webp?url'),
+      import('./assets/materiales.webp?url'),
       document.fonts.load('40px Rye').catch(() => []),
     ]);
-    const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(url);
+    const [gltf, lightImage, photos] = await Promise.all([
+      new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(url),
+      loadImage(lightUrl),
+      loadImage(photosUrl),
+    ]);
     if (this.disposed) return;
 
-    const texture = new CanvasTexture(buildRoomAtlas());
+    const texture = new CanvasTexture(buildRoomAtlas(photos));
     texture.colorSpace = SRGBColorSpace;
     texture.flipY = false;
     texture.minFilter = LinearMipmapLinearFilter;
     texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
     this.roomTexture = texture;
-    // Sin luces en tiempo real: los colores ya vienen horneados en cada vértice.
+    // Sin luces en tiempo real: toda la luz del salón viene horneada en una imagen.
+    const light = new Texture(lightImage);
+    light.needsUpdate = true;
+    light.flipY = false;
+    light.colorSpace = SRGBColorSpace;
+    light.channel = 1;
+    light.minFilter = LinearMipmapLinearFilter;
+    this.lightTexture = light;
+    // three divide la luz por pi en este material.
+    const lit = new MeshBasicMaterial({ map: texture, lightMap: light, lightMapIntensity: LIGHT_RANGE * Math.PI, vertexColors: true, side: DoubleSide });
     const material = new MeshBasicMaterial({ map: texture, vertexColors: true, side: DoubleSide });
 
-    const part = (name: string) => {
+    const part = (name: string, use = material) => {
       const mesh = gltf.scene.getObjectByName(name) as Mesh;
       (mesh.material as MeshBasicMaterial).dispose();
-      mesh.material = material;
+      mesh.material = use;
       return mesh;
     };
-    const room = part('boliche');
+    const room = part('boliche', lit);
+    const glowing = part('brillo');
     const table = part('mesa');
     const chairModel = part('silla');
     chairModel.updateMatrix();
@@ -341,8 +368,9 @@ export class TableScene {
       (placeholder.material as MeshBasicMaterial).dispose();
     }
     room.frustumCulled = false;
+    glowing.frustumCulled = false;
     table.frustumCulled = false;
-    this.scene.add(room, tableHolder, chairs, ...this.buildHalos());
+    this.scene.add(room, glowing, tableHolder, chairs, ...this.buildHalos());
     // Un poco de aire cargado: lo lejano se aleja de verdad sin sumar geometría.
     this.scene.fog = new FogExp2(0x2a1a10, 0.075);
     this.renderer.setClearColor(0x14100c);
@@ -732,6 +760,7 @@ export class TableScene {
     this.faces.texture.dispose();
     this.tags.texture.dispose();
     this.roomTexture?.dispose();
+    this.lightTexture?.dispose();
     this.renderer.dispose();
   }
 }

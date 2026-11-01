@@ -7,10 +7,13 @@ import { NodeIO } from '@gltf-transform/core';
 import { EXTMeshoptCompression, KHRMeshQuantization } from '@gltf-transform/extensions';
 import { dedup, quantize, reorder, weld } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptEncoder } from 'meshoptimizer';
+import sharp from 'sharp';
 
 const ROOT = 'C:/Program Files/Blender Foundation';
 const RAW = 'scripts/blender/.out/boliche.raw.glb';
 const OUT = 'src/client/game/assets/boliche.glb';
+const LIGHT_RAW = 'scripts/blender/.out/luz.png';
+const LIGHT_OUT = 'src/client/game/assets/luz.webp';
 
 function findBlender() {
   if (process.env.BLENDER) return process.env.BLENDER;
@@ -31,7 +34,7 @@ const result = spawnSync(
   blender,
   [
     '--background', '--factory-startup', '--python-exit-code', '1',
-    '--python', 'scripts/blender/boliche.py', '--', RAW, 'src/client/game/assets/room-atlas.json',
+    '--python', 'scripts/blender/boliche.py', '--', RAW, 'src/client/game/assets/room-atlas.json', LIGHT_RAW,
   ],
   { encoding: 'utf8' },
 );
@@ -40,7 +43,7 @@ if (result.status !== 0) {
   console.error(output);
   process.exit(result.status ?? 1);
 }
-console.log(output.split('\n').filter((line) => line.endsWith(' caras')).join('\n'));
+console.log(output.split('\n').filter((line) => line.endsWith(' caras') || line.startsWith('Horneado')).join('\n'));
 
 await MeshoptEncoder.ready;
 const io = new NodeIO()
@@ -59,5 +62,9 @@ document
   .setEncoderOptions({ method: EXTMeshoptCompression.EncoderMethod.FILTER });
 await io.write(OUT, document);
 
+// Un desenfoque mínimo se lleva el grano que deja el horneado.
+await sharp(LIGHT_RAW).blur(0.7).webp({ quality: 78, effort: 6 }).toFile(LIGHT_OUT);
+
 const kb = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
 console.log(`${OUT}: ${kb(statSync(OUT).size)}, con gzip ${kb(gzipSync(readFileSync(OUT)).length)} (sin comprimir ${kb(statSync(RAW).size)})`);
+console.log(`${LIGHT_OUT}: ${kb(statSync(LIGHT_OUT).size)}`);

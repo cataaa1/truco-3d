@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
 const KB = 1024;
-const LIMITS = { entry: 25 * KB, game: 230 * KB, ambience: 420 * KB, deck: 400 * KB, menu: 420 * KB, voices: 4096 * KB, total: 2048 * KB };
+const LIMITS = { entry: 25 * KB, game: 230 * KB, ambience: 1400 * KB, deck: 400 * KB, menu: 420 * KB, voices: 4096 * KB, total: 3072 * KB };
 
 const dir = 'dist/assets';
 const files = readdirSync(dir).filter((f) => statSync(join(dir, f)).isFile());

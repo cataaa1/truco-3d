@@ -1,20 +1,26 @@
 # Genera el boliche, la mesa y la silla. Correr con: npm run models
 # Se escribe en coordenadas del juego: x derecha, y arriba, z hacia quien mira desde el asiento propio.
 # Cada jugador se ve siempre en z positivo mirando a -z: de frente queda la barra.
-# La luz se hornea en colores por vértice: el juego no calcula iluminación para el salón.
+# La luz del salón se calcula acá con Cycles y viaja en una imagen: el juego no calcula iluminación.
 import json
 import math
+import os
 import random
 import sys
 from pathlib import Path
 
 import bmesh
 import bpy
+import numpy as np
 
 args = sys.argv[sys.argv.index("--") + 1 :]
 OUT = Path(args[0])
 ATLAS_FILE = Path(args[1])
-PREVIEW = Path(args[2]) if len(args) > 2 else None
+LIGHT_FILE = Path(args[2]).resolve()
+BAKE_SIZE = int(os.environ.get("BAKE_SIZE", 2048))
+BAKE_SAMPLES = int(os.environ.get("BAKE_SAMPLES", 256))
+# Rango guardado en la imagen de luz. El juego usa el mismo valor en LIGHT_RANGE.
+LIGHT_RANGE = 2.0
 
 atlas = json.loads(ATLAS_FILE.read_text(encoding="utf8"))
 SIZE = atlas["size"]
@@ -27,39 +33,36 @@ X_MIN, X_MAX = -3.6, 3.6
 Z_MIN, Z_MAX = -3.8, 4.0
 TABLE_Y = 0.74
 
-# (posición, color lineal, potencia)
+# (posición, color lineal, potencia en vatios de Blender, radio)
 LAMPS = [
-    ((0.0, 2.5, 0.0), (1.0, 0.72, 0.42), 5.0),
-    ((-1.9, 2.5, -1.6), (1.0, 0.7, 0.4), 3.2),
-    ((1.9, 2.5, -1.6), (1.0, 0.7, 0.4), 3.2),
-    ((0.0, 2.2, -3.2), (1.0, 0.74, 0.45), 1.3),
-    ((3.2, 2.1, 0.2), (1.0, 0.62, 0.32), 1.5),
-    ((-3.2, 1.9, 0.6), (0.85, 0.85, 0.8), 2.4),
-    ((0.0, 3.0, 2.8), (1.0, 0.72, 0.45), 1.8),
-    ((-2.75, 2.2, 1.6), (1.0, 0.72, 0.42), 0.9),
-    ((2.85, 2.2, 0.45), (1.0, 0.72, 0.42), 0.8),
-    ((2.75, 2.2, 2.6), (1.0, 0.72, 0.42), 0.9),
-    ((-2.8, 2.2, -0.4), (1.0, 0.72, 0.42), 0.8),
-    ((-2.4, 2.1, 3.7), (1.0, 0.68, 0.38), 0.8),
-    ((0.75, 2.1, 3.7), (1.0, 0.68, 0.38), 0.8),
+    ((0.0, 2.62, 0.0), (1.0, 0.72, 0.42), 80, 0.06),
+    # Relleno suave: el resplandor general del salón sobre el techo y las paredes.
+    ((0.0, 3.05, 0.6), (1.0, 0.74, 0.5), 46, 0.5),
+    ((-3.25, 2.25, -0.82), (1.0, 0.66, 0.36), 18, 0.07),
+    ((-3.25, 2.25, 0.925), (1.0, 0.66, 0.36), 18, 0.07),
+    ((2.6, 2.75, 3.45), (1.0, 0.68, 0.4), 16, 0.1),
+    ((-2.75, 2.36, 1.6), (1.0, 0.7, 0.4), 12, 0.04),
+    ((2.75, 2.36, 2.6), (1.0, 0.7, 0.4), 12, 0.04),
+    ((-2.8, 2.36, -0.4), (1.0, 0.7, 0.4), 12, 0.04),
+    ((3.2, 2.15, -2.0), (1.0, 0.66, 0.36), 16, 0.07),
+    ((3.2, 2.15, 0.95), (1.0, 0.66, 0.36), 16, 0.07),
+    ((-1.52, 2.55, 3.72), (1.0, 0.66, 0.36), 12, 0.07),
+    ((0.75, 2.55, 3.72), (1.0, 0.66, 0.36), 12, 0.07),
+    ((0.0, 3.1, 2.8), (1.0, 0.72, 0.45), 30, 0.14),
+    # Luz escondida detrás de la barra, sobre los estantes.
+    ((-2.0, 2.45, -3.4), (1.0, 0.74, 0.46), 16, 0.1),
+    ((0.0, 2.45, -3.4), (1.0, 0.74, 0.46), 16, 0.1),
+    ((2.0, 2.45, -3.4), (1.0, 0.74, 0.46), 16, 0.1),
 ]
-AMBIENT = (0.1, 0.072, 0.058)
-
-# Lo que hace sombra sobre el piso: (x, z, radio, cuánto oscurece).
-FLOOR_SHADOWS = [
-    (0.0, 0.0, 1.55, 0.62),
-    (-2.75, 1.6, 0.62, 0.55),
-    (2.75, 2.6, 0.62, 0.55),
-    (2.85, 0.45, 0.62, 0.55),
-    (-2.8, -0.4, 0.62, 0.55),
-    (-2.4, -1.84, 0.26, 0.45),
-    (-1.25, -1.84, 0.26, 0.45),
-    (1.1, -1.84, 0.26, 0.45),
-    (2.3, -1.84, 0.26, 0.45),
-    (3.05, 3.4, 0.62, 0.6),
-    (-3.1, 3.3, 0.5, 0.5),
-    (-0.75, 3.72, 0.7, 0.45),
-]
+WORLD_LIGHT = (0.035, 0.026, 0.02)
+GLOW_STRENGTH = 2.2
+# Color medio de cada textura: da el tono correcto a la luz que rebota.
+REGION_ALBEDO = {
+    "brick": (0.34, 0.15, 0.11),
+    "wallpaper": (0.42, 0.19, 0.14),
+    "tile": (0.52, 0.5, 0.44),
+    "rug": (0.35, 0.1, 0.08),
+}
 
 
 def srgb(hex_color):
@@ -90,48 +93,25 @@ def sub(a, b):
     return tuple(x - y for x, y in zip(a, b))
 
 
-def light_at(pos, normal, baked=True):
-    if not baked:
-        return WHITE
-    total = list(AMBIENT)
-    for lamp, color, power in LAMPS:
-        to_lamp = sub(lamp, pos)
-        dist2 = max(0.25, sum(c * c for c in to_lamp))
-        facing = max(0.0, sum(a * b for a, b in zip(normalize(to_lamp), normal)))
-        amount = power * (0.25 + 0.75 * facing) / (1.0 + dist2)
-        for i in range(3):
-            total[i] += color[i] * amount
-    # Sombras de contacto sobre el piso y al pie del mostrador.
-    shade = 1.0
-    if pos[1] < 0.1:
-        for x, z, radius, strength in FLOOR_SHADOWS:
-            t = max(0.0, min(1.0, 1 - math.hypot(pos[0] - x, pos[2] - z) / radius))
-            shade *= 1 - strength * t * t * (3 - 2 * t)
-        t = max(0.0, min(1.0, 1 - (pos[2] + 2.14) / 0.7))
-        shade *= 1 - 0.5 * t * t
-    # Los rincones juntan menos luz: el salón gana profundidad sin calcular sombras.
-    corner = lambda d, floor, reach: floor + (1 - floor) * max(0.0, min(1.0, d / reach)) ** 0.7
-    shade *= corner(HEIGHT - pos[1], 0.55, 0.5) * corner(pos[1], 0.68, 0.4)
-    shade *= corner(X_MAX - pos[0], 0.72, 0.5) * corner(pos[0] - X_MIN, 0.72, 0.5)
-    shade *= corner(Z_MAX - pos[2], 0.72, 0.5) * corner(pos[2] - Z_MIN, 0.72, 0.5)
-    return tuple(min(1.0, c * shade) for c in total)
-
-
 class Part:
     # Fusionar puntos iguales ahorra vértices en el salón.
     merge_points = True
+    smooth = False
 
-    def __init__(self, name, baked=True):
+    def __init__(self, name, glow_target=None):
         self.name = name
-        self.baked = baked
         self.bm = bmesh.new()
         self.uv = self.bm.loops.layers.uv.new("UV")
         self.color = self.bm.loops.layers.float_color.new("Color")
+        self.albedo = self.bm.loops.layers.float_color.new("Albedo")
+        # Lo que brilla va a otra malla: no lleva luz horneada y alumbra al resto.
+        self.glow_target = glow_target
 
     def face(self, corners, region, uvs, tint=WHITE, normal=None, glow=False):
-        if normal is None:
-            normal = normalize(cross(sub(corners[1], corners[0]), sub(corners[2], corners[0])))
+        if glow and self.glow_target:
+            return self.glow_target.face(corners, region, uvs, tint, normal)
         x, y, w, h = REGIONS[region]
+        bounce = REGION_ALBEDO.get(region, WHITE)
         pad = 2
         verts = [self.bm.verts.new((c[0], -c[2], c[1])) for c in corners]
         bm_face = self.bm.faces.new(verts)
@@ -140,9 +120,9 @@ class Part:
             py = y + pad + v * (h - pad * 2)
             # El juego usa la textura sin invertir: v de glTF coincide con y del lienzo.
             loop[self.uv].uv = (px / SIZE, 1 - py / SIZE)
-            lit = (1.0, 1.0, 1.0) if glow else light_at(corner, normal, self.baked)
             base = tint(corner) if callable(tint) else tint
-            loop[self.color] = (lit[0] * base[0], lit[1] * base[1], lit[2] * base[2], 1.0)
+            loop[self.color] = (base[0], base[1], base[2], 1.0)
+            loop[self.albedo] = (base[0] * bounce[0], base[1] * bounce[1], base[2] * bounce[2], 1.0)
         return bm_face
 
     def quad(self, a, b, c, d, region="white", tint=WHITE, glow=False, uv=(0, 0, 1, 1)):
@@ -222,11 +202,17 @@ class Part:
         self.bm.verts.ensure_lookup_table()
         if self.merge_points:
             bmesh.ops.remove_doubles(self.bm, verts=self.bm.verts, dist=0.00001)
+        if self.smooth:
+            # Las curvas se ven redondas aunque tengan pocos lados; los cantos de verdad siguen marcados.
+            for edge in self.bm.edges:
+                edge.smooth = edge.calc_face_angle(math.pi) < math.radians(42)
+            for bm_face in self.bm.faces:
+                bm_face.smooth = True
         self.bm.to_mesh(mesh)
         faces = len(self.bm.faces)
         self.bm.free()
         for polygon in mesh.polygons:
-            polygon.use_smooth = False
+            polygon.use_smooth = self.smooth
         obj = bpy.data.objects.new(self.name, mesh)
         bpy.context.scene.collection.objects.link(obj)
         print(f"{self.name}: {faces} caras")
@@ -240,7 +226,7 @@ def bottle(part, x, y, z, height=None):
     part.lathe(
         (x, y, z),
         [(r, 0), (r, height * 0.62), (r * 0.36, height * 0.8), (r * 0.32, height), (0, height)],
-        segments=6,
+        segments=10,
         tint=color,
     )
     # Etiqueta: un rectángulo adelante, sin más geometría alrededor.
@@ -286,20 +272,20 @@ def thonet(part, ox, oz, yaw):
     part.box((x, 0.66, z), (0.32, 0.07, 0.015), region="wood", tint=tint, yaw=yaw)
 
 
-def frame(part, x0, x1, y0, y1, plane, region, tint=WHITE, thickness=0.05):
+def frame(part, x0, x1, y0, y1, plane, region, tint=WHITE, thickness=0.05, glow=False):
     """Cuadro o espejo sobre una pared. plane = ('x', valor, signo) o ('z', valor, signo)."""
     axis, value, sign = plane
     def p(a, y, depth=0.0):
         d = value + sign * depth
         return (d, y, a) if axis == "x" else (a, y, d)
 
-    def rect(a0, a1, b0, b1, depth, reg, t, uv=(0, 0, 1, 1)):
+    def rect(a0, a1, b0, b1, depth, reg, t, uv=(0, 0, 1, 1), lit=False):
         # Se ordena para que la imagen no quede espejada desde adentro del salón.
         left, right = (a1, a0) if axis == "x" and sign > 0 else (a0, a1)
-        part.quad(p(left, b0, depth), p(right, b0, depth), p(right, b1, depth), p(left, b1, depth), region=reg, tint=t, uv=uv)
+        part.quad(p(left, b0, depth), p(right, b0, depth), p(right, b1, depth), p(left, b1, depth), region=reg, tint=t, uv=uv, glow=lit)
 
     rect(x0, x1, y0, y1, 0.01, "wood_dark", WOOD_BLACK)
-    rect(x0 + thickness, x1 - thickness, y0 + thickness, y1 - thickness, 0.02, region, tint)
+    rect(x0 + thickness, x1 - thickness, y0 + thickness, y1 - thickness, 0.02, region, tint, lit=glow)
 
 
 TURQUOISE = srgb(0x3fa8b8)
@@ -401,7 +387,7 @@ def glass(part, x, y, z, tall=False):
         profile = [(0.032, 0), (0.008, 0.012), (0.007, 0.1), (0.034, 0.14), (0.036, 0.2)]
     else:
         profile = [(0.032, 0), (0.04, height)]
-    part.lathe((x, y, z), profile, segments=6, tint=GLASSWARE)
+    part.lathe((x, y, z), profile, segments=10, tint=GLASSWARE)
 
 
 def stack(part, x, y, z, count=5, radius=0.07, tint=CREAM_WARE):
@@ -409,13 +395,84 @@ def stack(part, x, y, z, count=5, radius=0.07, tint=CREAM_WARE):
     for i in range(count):
         base = i * 0.03
         profile += [(radius * 0.72, base), (radius, base + 0.028)]
-    part.lathe((x, y, z), profile, segments=8, tint=tint)
+    part.lathe((x, y, z), profile, segments=12, tint=tint)
+
+
+def fernet(part, x, y, z):
+    """Botella oscura con etiqueta crema: la infaltable."""
+    h = 0.32
+    part.lathe((x, y, z), [(0.038, 0), (0.04, 0.01), (0.04, h * 0.6), (0.016, h * 0.8), (0.015, h), (0, h)], segments=10, tint=srgb(0x1a0f08))
+    part.lathe((x, y + h * 0.88, z), [(0.0165, 0), (0.0165, h * 0.13)], segments=10, tint=srgb(0x7a1f1a))
+    w, front = 0.033, z + 0.0405
+    part.quad((x - w, y + h * 0.16, front), (x + w, y + h * 0.16, front), (x + w, y + h * 0.52, front), (x - w, y + h * 0.52, front), region="etiquetas", uv=(0, 0, 0.5, 1))
+
+
+def cola(part, x, y, z):
+    h = 0.27
+    part.lathe((x, y, z), [(0.028, 0), (0.033, 0.03), (0.026, 0.1), (0.033, 0.16), (0.012, 0.23), (0.012, h), (0, h)], segments=10, tint=srgb(0x2a0f08))
+    part.lathe((x, y + 0.09, z), [(0.0275, 0), (0.0275, 0.05)], segments=10, tint=srgb(0xb3261e))
+
+
+def fernet_drink(part, x, y, z):
+    """Fernet con coca en vaso alto, con su espuma."""
+    part.lathe((x, y, z), [(0.03, 0), (0.037, 0.14)], segments=10, tint=srgb(0x241006))
+    part.lathe((x, y + 0.14, z), [(0.037, 0), (0.039, 0.016), (0.03, 0.022), (0, 0.024)], segments=10, tint=srgb(0xd8c9a8))
+
+
+def mate(part, x, y, z):
+    """Mate de calabaza con virola y bombilla."""
+    part.lathe((x, y, z), [(0.02, 0), (0.04, 0.018), (0.046, 0.045), (0.038, 0.075), (0.03, 0.088)], segments=12, tint=srgb(0x6b3d1f))
+    part.lathe((x, y + 0.088, z), [(0.03, 0), (0.033, 0.01), (0.031, 0.012)], segments=12, tint=srgb(0xc8c4b8))
+    part.lathe((x, y + 0.09, z), [(0.03, 0), (0, 0.004)], segments=10, tint=srgb(0x4e6b2a))
+    limb(part, (x, y + 0.07, z), (x + 0.035, y + 0.17, z - 0.012), 0.004, 0.003, srgb(0xd8d4c8), segments=5)
+
+
+def termo(part, x, y, z):
+    steel = srgb(0xa8a8a0)
+    part.lathe((x, y, z), [(0.052, 0), (0.055, 0.012), (0.055, 0.25), (0.045, 0.28), (0.03, 0.29), (0.03, 0.31)], segments=12, tint=steel)
+    part.lathe((x, y + 0.31, z), [(0.036, 0), (0.038, 0.055), (0.03, 0.065), (0, 0.065)], segments=12, tint=srgb(0x2f6b4e))
+    limb(part, (x + 0.05, y + 0.22, z), (x + 0.085, y + 0.14, z), 0.008, 0.008, srgb(0x1f1a16), segments=4)
+    limb(part, (x + 0.085, y + 0.14, z), (x + 0.05, y + 0.06, z), 0.008, 0.008, srgb(0x1f1a16), segments=4)
+
+
+def yerba(part, x, y, z):
+    part.box((x, y + 0.11, z), (0.1, 0.22, 0.06), tint=srgb(0x2f7d3a))
+    front = z + 0.0305
+    part.quad((x - 0.05, y + 0.02, front), (x + 0.05, y + 0.02, front), (x + 0.05, y + 0.2, front), (x - 0.05, y + 0.2, front), region="etiquetas", uv=(0.5, 0, 1, 1))
+
+
+def alfajores(part, x, y, z):
+    part.lathe((x, y, z), [(0.04, 0), (0.1, 0.012), (0.11, 0.02), (0, 0.016)], segments=14, tint=CREAM_WARE)
+    for i, (dx, dz, level) in enumerate(((-0.04, 0.02, 0), (0.04, 0.02, 0), (0, -0.04, 0), (0, 0.005, 1))):
+        base = y + 0.02 + level * 0.034
+        part.lathe((x + dx, base, z + dz), [(0.032, 0), (0.033, 0.012), (0.03, 0.015), (0.033, 0.018), (0.033, 0.03), (0, 0.032)], segments=10, tint=srgb(0xe9dcc4) if i == 3 else srgb(0x4a2a16))
+
+
+def argentine_flag(part, x0, x1, y0, y1, z):
+    sky, white = srgb(0x74acdf), srgb(0xf4f2ec)
+    third = (y1 - y0) / 3
+    part.box(((x0 + x1) / 2, y1 + 0.015, z + 0.012), (x1 - x0 + 0.06, 0.02, 0.02), tint=BRASS)
+    for i, tint in enumerate((sky, white, sky)):
+        a, b = y1 - third * i, y1 - third * (i + 1)
+        for j in range(8):
+            u0, u1 = lerp(x0, x1, j / 8), lerp(x0, x1, (j + 1) / 8)
+            # Tela con algunos pliegues: la luz horneada los marca.
+            d0, d1 = 0.012 * math.sin(j * 1.6), 0.012 * math.sin((j + 1) * 1.6)
+            part.face(((u0, b, z - d0 - 0.015), (u1, b, z - d1 - 0.015), (u1, a, z - d1 - 0.015), (u0, a, z - d0 - 0.015)), "plaster", ((0, 1), (1, 1), (1, 0), (0, 0)), tint)
+    cx, cy, sun = (x0 + x1) / 2, (y0 + y1) / 2, third * 0.38
+    for i in range(16):
+        a0, a1 = 2 * math.pi * i / 16, 2 * math.pi * (i + 1) / 16
+        reach = sun * (1.45 if i % 2 else 1.0)
+        part.face(((cx, cy, z - 0.03), (cx + reach * math.cos(a0), cy + reach * math.sin(a0), z - 0.03), (cx + sun * math.cos(a1), cy + sun * math.sin(a1), z - 0.03)), "white", ((0, 0), (1, 0), (1, 1)), srgb(0xe3a93c))
 
 
 def fill_row(part, x0, x1, y, z, kind):
     x = x0 + 0.05
     while x < x1 - 0.04:
-        if kind == "wine":
+        if kind == "fernet":
+            fernet(part, x, y, z)
+            x += 0.098
+        elif kind == "wine":
             bottle(part, x, y, z, random.uniform(0.3, 0.38))
             x += random.uniform(0.098, 0.125)
         elif kind == "turquoise":
@@ -460,6 +517,8 @@ def build_back_bar(room):
             row = {0: "mixed", 1: "wine", 2: "turquoise" if kind == "outer" else "wine"}[index]
             if kind == "center" and index == 0:
                 row = "glasses"
+            if kind == "center" and index == 1:
+                row = "fernet"
             fill_row(room, x0, x1, level, back + 0.17, row)
         # Arco de cada cuerpo: la madera baja en curva sobre los estantes.
         steps = 10
@@ -635,16 +694,16 @@ def cafe_table(part, x, z, chairs, goods=0):
     top = 0.745
     ashtray(part, x - 0.12, top, z + 0.08)
     if goods == 0:
-        glass(part, x + 0.08, top, z + 0.14)
-        glass(part, x + 0.2, top, z - 0.06, tall=True)
+        fernet_drink(part, x + 0.08, top, z + 0.14)
+        fernet(part, x + 0.2, top, z - 0.06)
         siphon(part, x - 0.04, top, z - 0.16, TURQUOISE)
     elif goods == 1:
         part.lathe((x + 0.1, top, z), [(0.03, 0), (0.03, 0.2), (0.012, 0.28), (0, 0.28)], segments=6, tint=random.choice(GLASS_COLORS))
         glass(part, x - 0.02, top, z - 0.17)
         part.box((x + 0.03, top + 0.012, z + 0.2), (0.07, 0.025, 0.1), tint=srgb(0xa33024), yaw=0.4)
     else:
-        stack(part, x + 0.1, top, z + 0.1, count=2, radius=0.08)
-        glass(part, x + 0.14, top + 0.03, z + 0.1)
+        mate(part, x + 0.08, top, z + 0.14)
+        termo(part, x + 0.2, top, z + 0.02)
         part.quad((x - 0.2, top + 0.003, z - 0.05), (x + 0.04, top + 0.003, z - 0.18), (x + 0.1, top + 0.003, z - 0.03), (x - 0.14, top + 0.003, z + 0.1), region="plaster", tint=srgb(0xd8cfb8))
 
 
@@ -751,8 +810,34 @@ def espresso_machine(part, x, top, z):
         part.lathe((x - 0.15 + i * 0.1, top + 0.33, z - 0.09), [(0.03, 0), (0.038, 0.05), (0, 0.05)], segments=6, tint=CREAM_WARE)
 
 
+class RoomPart(Part):
+    smooth = True
+
+    def finish(self):
+        # La luz se calcula del lado que mira cada cara: lo apoyado en paredes, piso y techo tiene que mirar adentro.
+        self.bm.normal_update()
+        flip = []
+        for bm_face in self.bm.faces:
+            n = bm_face.normal
+            c = bm_face.calc_center_median()
+            x, y, z = c.x, c.z, -c.y
+            wrong = (
+                (x < X_MIN + 0.14 and n.x < -0.9)
+                or (x > X_MAX - 0.14 and n.x > 0.9)
+                or (z < Z_MIN + 0.14 and n.y > 0.9)
+                or (z > Z_MAX - 0.14 and n.y < -0.9)
+                or (y < 0.02 and n.z < -0.9)
+                or (y > HEIGHT - 0.06 and n.z > 0.9)
+            )
+            if wrong:
+                flip.append(bm_face)
+        bmesh.ops.reverse_faces(self.bm, faces=flip)
+        print(f"Horneado: {len(flip)} caras dadas vuelta")
+        return super().finish()
+
+
 def build_room():
-    room = Part("boliche")
+    room = RoomPart("boliche", glow_target=Part("brillo"))
     width, depth = X_MAX - X_MIN, Z_MAX - Z_MIN
     nx, nz = int(width), int(depth)
     right = ("x", X_MAX, -1)
@@ -761,7 +846,7 @@ def build_room():
     paper = srgb(0xd8b8a0)
 
     # Piso con guarda de baldosas oscuras, bien subdividido para llevar las sombras horneadas.
-    room.patch((X_MIN, 0, Z_MIN), (width, 0, 0), (0, 0, depth), nx * 4, nz * 4, "tile", repeat=(4, 4), normal=(0, 1, 0))
+    room.patch((X_MIN, 0, Z_MIN), (width, 0, 0), (0, 0, depth), nx * 2, nz * 2, "tile", repeat=(2, 2), normal=(0, 1, 0))
     room.patch((-2.05, 0.006, -2.05), (4.1, 0, 0), (0, 0, 4.1), 8, 8, "rug", repeat=(2, 2), normal=(0, 1, 0))
     guard = srgb(0x4a2c1c)
     for a in (X_MIN + 0.13, X_MAX - 0.13):
@@ -794,12 +879,14 @@ def build_room():
     room.patch((X_MIN, 0, Z_MIN), (width, 0, 0), (0, HEIGHT, 0), nx * 2, 8, "wallpaper", tint=paper, repeat=(1, 1), normal=(0, 0, 1))
 
     # Pared derecha: ladrillo, espejos y cuadros, como en los boliches de San Telmo.
-    room.patch((X_MAX, 0, Z_MIN), (0, 0, depth), (0, HEIGHT, 0), nz * 2, 8, "brick", repeat=(4, 4), normal=(-1, 0, 0))
+    room.patch((X_MAX, 0, Z_MIN), (0, 0, depth), (0, HEIGHT, 0), nz, 4, "brick", repeat=(2, 2), normal=(-1, 0, 0))
     wainscot(room, right, -2.1, Z_MAX, top=0.82)
     frame(room, -1.9, -1.0, 1.15, 2.45, right, "mirror")
     frame(room, -0.8, 1.25, 2.12, 2.95, right, "sign_red", thickness=0.02)
     frame(room, -0.8, -0.1, 1.15, 1.85, right, "portrait")
     frame(room, 0.1, 0.8, 1.15, 1.85, right, "landscape")
+    frame(room, -2.42, -0.9, 2.55, 2.93, right, "dicho_a", thickness=0.02)
+    frame(room, 1.85, 3.25, 2.84, 3.2, right, "dicho_b", thickness=0.02)
     frame(room, 1.0, 1.75, 1.0, 2.0, right, "mirror")
     frame(room, 1.95, 2.55, 1.2, 2.0, right, "poster", thickness=0.02)
     frame(room, 2.0, 3.0, 2.25, 2.75, right, "sign_small", thickness=0.02)
@@ -815,10 +902,13 @@ def build_room():
     room.patch((X_MIN, 0, Z_MIN), (0, 0, depth), (0, HEIGHT, 0), nz * 2, 8, "wallpaper", tint=paper, repeat=(1, 1), normal=(1, 0, 0))
     wainscot(room, left, -2.15, Z_MAX)
     for z0, z1, region in ((-2.5, -0.9, "glass_bar"), (-0.75, 0.85, "glass_cafe"), (1.0, 2.6, "stained")):
-        frame(room, z0, z1, 1.05, 2.75, left, region, thickness=0.07)
+        frame(room, z0, z1, 1.05, 2.75, left, region, thickness=0.07, glow=True)
         wall_box(room, left, (z0 + z1) / 2, 1.04, z1 - z0 + 0.14, 0.04, 0.11, "wood", MAHOGANY)
         wall_box(room, left, (z0 + z1) / 2, 2.8, z1 - z0 + 0.1, 0.09, 0.07, "wood_dark", MAHOGANY_DARK)
         wall_box(room, left, (z0 + z1) / 2, 1.9, 0.035, 1.7, 0.035, "wood_dark", MAHOGANY_DARK, off=0.02)
+
+    for z in (-0.82, 0.925):
+        sconce(room, left, z, 2.1)
 
     # Pared de atrás: la puerta a la calle, el aparador y las fotos del club.
     room.patch((X_MIN, 0, Z_MAX), (width, 0, 0), (0, HEIGHT, 0), nx * 2, 8, "wallpaper", tint=paper, repeat=(1, 1), normal=(0, 0, -1))
@@ -840,6 +930,7 @@ def build_room():
     frame(room, -2.75, -1.75, 1.35, 2.35, ("z", Z_MAX, -1), "photos", thickness=0.04)
     frame(room, -1.3, -0.15, 1.35, 1.95, ("z", Z_MAX, -1), "portrait", thickness=0.04)
     frame(room, -1.3, -0.15, 2.05, 2.6, ("z", Z_MAX, -1), "landscape", thickness=0.04)
+    argentine_flag(room, 2.62, 3.42, 1.55, 2.1, Z_MAX)
     sconce(room, back_wall, -1.52, 2.45)
     sconce(room, back_wall, 0.75, 2.45)
 
@@ -854,12 +945,23 @@ def build_room():
     bandoneon(room, bx + 0.15, 0.88, bz)
     trophy(room, bx + 0.55, 0.88, bz + 0.05)
     trophy(room, bx + 0.42, 0.88, bz - 0.06)
+    mate(room, bx - 0.15, 0.88, bz + 0.1)
+    termo(room, bx - 0.02, 0.88, bz + 0.13)
+    yerba(room, bx - 0.2, 0.88, bz - 0.12)
 
     counter_z = build_back_bar(room)
     espresso_machine(room, -0.85, 1.04, counter_z - 0.05)
     for i in range(5):
         glass(room, 0.55 + i * 0.09, 1.04, counter_z + 0.2, tall=i % 2 == 0)
     ashtray(room, -1.5, 1.04, counter_z + 0.22)
+    # Sobre la barra: fernet con coca, mate y alfajores.
+    fernet(room, 0.36, 1.04, counter_z - 0.08)
+    cola(room, 0.47, 1.04, counter_z - 0.08)
+    fernet_drink(room, 0.42, 1.04, counter_z + 0.12)
+    fernet_drink(room, 0.3, 1.04, counter_z + 0.16)
+    alfajores(room, 1.32, 1.04, counter_z + 0.14)
+    mate(room, -0.32, 1.04, counter_z + 0.2)
+    termo(room, -0.2, 1.04, counter_z + 0.08)
     room.box((1.0, 1.095, counter_z + 0.18), (0.11, 0.11, 0.06), tint=srgb(0xb8b0a0))
     room.box((-1.55, 1.045, counter_z - 0.05), (0.34, 0.012, 0.24), region="plaster", tint=srgb(0xd8cfb8), yaw=0.2)
 
@@ -870,7 +972,9 @@ def build_room():
     # Mesitas con sillas contra las paredes.
     for x, z, chairs, goods in ((-2.75, 1.6, (1.5, -1.5), 0), (2.75, 2.6, (0.2, 3.2), 1), (-2.8, -0.4, (0.1, 3.0), 2), (2.85, 0.45, (-1.3, 1.9), 0)):
         cafe_table(room, x, z, chairs, goods)
-        pendant(room, x, z, 2.28)
+        # La del medio de la pared taparía el cartel grande.
+        if (x, z) != (2.85, 0.45):
+            pendant(room, x, z, 2.28)
 
     # Rincón de los toneles y los cajones de soda.
     barrel(room, 3.18, 0, 3.5)
@@ -956,7 +1060,7 @@ def build_table():
 
 
 def build_chair():
-    chair = Part("silla", baked=False)
+    chair = Part("silla")
     thonet(chair, 0, 0, 0)
     return chair
 
@@ -972,7 +1076,7 @@ class Figure(Part):
     merge_points = False
 
     def __init__(self, name):
-        super().__init__(name, baked=False)
+        super().__init__(name)
         self.kind = self.FIXED
         self.variant = 0
 
@@ -1727,16 +1831,153 @@ def build_body():
     return body
 
 
+def vertex_material(name, attribute, emission=0.0):
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    shader = nodes["Principled BSDF"]
+    color = nodes.new("ShaderNodeVertexColor")
+    color.layer_name = attribute
+    links.new(color.outputs["Color"], shader.inputs["Base Color"])
+    shader.inputs["Roughness"].default_value = 0.85
+    if emission:
+        links.new(color.outputs["Color"], shader.inputs["Emission Color"])
+        shader.inputs["Emission Strength"].default_value = emission
+    return material
+
+
+def use_gpu():
+    # CUDA primero: con OPTIX este horneado sale todo negro.
+    prefs = bpy.context.preferences.addons["cycles"].preferences
+    for kind in ("CUDA", "OPTIX"):
+        try:
+            prefs.compute_device_type = kind
+        except TypeError:
+            continue
+        prefs.get_devices()
+        found = [d for d in prefs.devices if d.type == kind]
+        if found:
+            for device in prefs.devices:
+                device.use = device.type == kind
+            bpy.context.scene.cycles.device = "GPU"
+            return kind
+    return "CPU"
+
+
+def bake_light(room_obj, glow_obj, table_obj):
+    """Calcula toda la luz del salón y la guarda en una imagen, con sombras y rebotes reales."""
+    scene = bpy.context.scene
+    scene.render.engine = "CYCLES"
+    device = use_gpu()
+    scene.cycles.samples = BAKE_SAMPLES
+    scene.cycles.use_adaptive_sampling = False
+    scene.cycles.max_bounces = 6
+    scene.cycles.diffuse_bounces = 5
+    scene.cycles.glossy_bounces = 1
+
+    world = bpy.data.worlds.new("aire")
+    world.use_nodes = True
+    world.node_tree.nodes["Background"].inputs[0].default_value = (*WORLD_LIGHT, 1.0)
+    scene.world = world
+
+    for index, (pos, color, power, radius) in enumerate(LAMPS):
+        light = bpy.data.lights.new(f"foco{index}", "POINT")
+        light.energy = power
+        light.color = color
+        light.shadow_soft_size = radius
+        lamp = bpy.data.objects.new(f"foco{index}", light)
+        lamp.location = (pos[0], -pos[2], pos[1])
+        scene.collection.objects.link(lamp)
+
+    room_obj.data.materials.append(vertex_material("salon", "Albedo"))
+    glow_obj.data.materials.append(vertex_material("brillo", "Color", GLOW_STRENGTH))
+    # Lo que brilla alumbra, pero no le hace sombra a su propia lámpara.
+    glow_obj.visible_shadow = False
+
+    # La mesa del medio hace sombra sobre la alfombra; su tamaño es el de una mesa de 4.
+    table_mat = vertex_material("mesa", "Albedo")
+    table_obj.data.materials.append(table_mat)
+    table_obj.location = (0, 0, TABLE_Y)
+    table_obj.scale = (0.95, 0.95, 1.0)
+
+    bpy.context.view_layer.objects.active = room_obj
+    for obj in bpy.data.objects:
+        obj.select_set(obj is room_obj)
+    mesh = room_obj.data
+    lightmap = mesh.uv_layers.new(name="Lightmap")
+    mesh.uv_layers.active = lightmap
+    lightmap.active_render = True
+    for other in bpy.data.objects:
+        if other.type == "MESH" and other not in (room_obj, glow_obj, table_obj):
+            other.hide_render = True
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(60), island_margin=0.0016, area_weight=0.0, correct_aspect=False)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    image = bpy.data.images.new("luz", BAKE_SIZE, BAKE_SIZE, float_buffer=True)
+    nodes = room_obj.data.materials[0].node_tree.nodes
+    target = nodes.new("ShaderNodeTexImage")
+    target.image = image
+    nodes.active = target
+
+    scene.render.bake.use_pass_direct = True
+    scene.render.bake.use_pass_indirect = True
+    scene.render.bake.use_pass_color = False
+    scene.render.bake.margin = 6
+    scene.render.bake.margin_type = "EXTEND"
+    bpy.ops.object.bake(type="DIFFUSE")
+    print(f"Horneado con {device}: {BAKE_SIZE} px, {BAKE_SAMPLES} muestras, {len(mesh.polygons)} caras")
+
+    # Se guarda con gamma y comprimido en rango: lo oscuro es lo que más detalle necesita.
+    pixels = np.zeros(BAKE_SIZE * BAKE_SIZE * 4, dtype=np.float32)
+    image.update()
+    image.pixels.foreach_get(pixels)
+    rgb = pixels.reshape(-1, 4)[:, :3]
+    print(f"Horneado: luz media {rgb.mean():.4f}, mediana {np.median(rgb):.4f}, percentil 99 {np.percentile(rgb, 99):.3f}, máxima {rgb.max():.2f}")
+    encoded_pixels = pixels.copy()
+    encoded_pixels.reshape(-1, 4)[:, :3] = np.clip(rgb / LIGHT_RANGE, 0, 1) ** (1 / 2.2)
+    encoded_pixels.reshape(-1, 4)[:, 3] = 1.0
+    encoded = bpy.data.images.new("luz8", BAKE_SIZE, BAKE_SIZE, float_buffer=False)
+    encoded.colorspace_settings.name = "Non-Color"
+    encoded.pixels.foreach_set(encoded_pixels)
+    LIGHT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    encoded.filepath_raw = str(LIGHT_FILE)
+    encoded.file_format = "PNG"
+    encoded.save()
+
+    # Se deja todo como lo espera el exportador.
+    mesh.uv_layers.active_index = 0
+    table_obj.location = (0, 0, 0)
+    table_obj.scale = (1.0, 1.0, 1.0)
+    for obj in (room_obj, glow_obj, table_obj):
+        obj.data.materials.clear()
+        albedo = obj.data.color_attributes.get("Albedo")
+        if albedo:
+            obj.data.color_attributes.remove(albedo)
+        obj.data.color_attributes.active_color = obj.data.color_attributes["Color"]
+
+
 for item in list(bpy.data.objects):
     bpy.data.objects.remove(item)
 
-build_room().finish()
-build_table().finish()
+room_part = build_room()
+glow_part = room_part.glow_target
+room_obj = room_part.finish()
+glow_obj = glow_part.finish()
+table_obj = build_table().finish()
 build_chair().finish()
 build_body().finish()
 build_head().finish()
 build_face().finish()
 bpy.context.view_layer.update()
+bake_light(room_obj, glow_obj, table_obj)
+for obj in bpy.data.objects:
+    if obj.type == "MESH" and obj.data.color_attributes.get("Albedo"):
+        obj.data.color_attributes.remove(obj.data.color_attributes["Albedo"])
+for obj in [o for o in bpy.data.objects if o.type == "LIGHT"]:
+    bpy.data.objects.remove(obj)
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 bpy.ops.export_scene.gltf(

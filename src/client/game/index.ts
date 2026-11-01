@@ -203,7 +203,7 @@ export function mountGame(
         break;
       case 'envido':
         if (event.tantos >= 0) {
-          toast(`${nameOf(event.seat)} gana el envido con ${event.tantos}. Al final tiene que mostrar.`, 3600);
+          toast(event.seat === me ? `Ganaste el envido con ${event.tantos}. Al final tenés que mostrar.` : `${nameOf(event.seat)} gana el envido con ${event.tantos}. Al final tiene que mostrar.`, 3600);
           voices.play(event.seat, String(event.tantos));
           const rival = (event.seat + 1) % room.players;
           setTimeout(() => voices.play(rival, 'son_buenas'), 800);
@@ -215,8 +215,8 @@ export function mountGame(
       case 'show':
         toast(
           event.shown
-            ? `${nameOf(event.seat)} mostró ${event.cards.map(cardName).join(' y ')}: ${event.points} para ${teamLabel(event.team)}`
-            : `${nameOf(event.seat)} no mostró: ${event.points} para ${teamLabel(event.team)}`,
+            ? `${event.seat === me ? 'Mostraste' : `${nameOf(event.seat)} mostró`} ${event.cards.map(cardName).join(' y ')}: ${event.points} para ${teamLabel(event.team)}`
+            : `${event.seat === me ? 'No mostraste' : `${nameOf(event.seat)} no mostró`}: ${event.points} para ${teamLabel(event.team)}`,
           4200,
         );
         break;
