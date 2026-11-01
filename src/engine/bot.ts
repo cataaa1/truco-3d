@@ -1,10 +1,69 @@
-import { cardRank, cardSuit, envidoPoints, strength, type CardId } from './cards';
+import { cardRank, cardSuit, envidoPoints, shuffledDeck, strength, type CardId } from './cards';
 import type { SenaId } from '../shared/protocol';
-import { legalActions, teamOf, type Action, type GameState } from './game';
+import { canOpenEnvido, decideHand, legalActions, teamOf, type Action, type GameState } from './game';
 
 /** Lo que el bot sabe por las señas de su compañero. */
 export interface BotHints {
   partnerHasEnvido?: boolean;
+}
+
+// Tantos desde los que un bot avisa el envido o lo canta sin dudar.
+const SURE_ENVIDO = 30;
+// Pocas repeticiones: el plan gratis de Cloudflare da muy poco tiempo de cálculo por pedido.
+const SAMPLES = 60;
+
+/**
+ * Probabilidad de ganar la mano con lo que este jugador ve: sus cartas y las que ya están sobre la mesa.
+ * Reparte al azar las cartas que no vio y juega el resto de la mano muchas veces.
+ */
+export function winChance(state: GameState, seat: number, random: () => number = Math.random): number {
+  const { hand, config } = state;
+  const team = teamOf(seat);
+  const seen = new Set<CardId>([...hand.dealt[seat]!, ...hand.rounds.flat().map((play) => play.card)]);
+  const unseen = shuffledDeck(random).filter((card) => !seen.has(card));
+  let wins = 0;
+  for (let sample = 0; sample < SAMPLES; sample++) {
+    let next = 0;
+    const cards = hand.cards.map((held, s) => {
+      if (s === seat) return [...held];
+      const dealt: CardId[] = [];
+      for (let i = 0; i < held.length; i++, next++) {
+        const pick = next + Math.floor(random() * (unseen.length - next));
+        [unseen[next], unseen[pick]] = [unseen[pick]!, unseen[next]!];
+        dealt.push(unseen[next]!);
+      }
+      return dealt;
+    });
+    if (playOut(state, cards) === team) wins++;
+  }
+  return wins / SAMPLES;
+
+  function playOut(current: GameState, held: CardId[][]): number | null {
+    const winners = [...current.hand.roundWinners];
+    const manoTeam = teamOf(current.hand.mano);
+    let round = current.hand.rounds[current.hand.rounds.length - 1]!.map((play) => ({ ...play }));
+    let turn = current.hand.turn;
+    const active = Array.from({ length: config.players }, (_, s) => s).filter((s) => !current.hand.folded[s]);
+    for (let guard = 0; guard < config.players * 3 + 1; guard++) {
+      if (active.every((s) => round.some((play) => play.seat === s))) {
+        const best = round.reduce((a, b) => (strength(b.card) > strength(a.card) ? b : a));
+        const top = strength(best.card);
+        const teams = new Set(round.filter((play) => strength(play.card) === top).map((play) => teamOf(play.seat)));
+        winners.push(teams.size === 1 ? teamOf(best.seat) : null);
+        const decided = decideHand(winners, manoTeam);
+        if (decided !== null) return decided;
+        round = [];
+        turn = best.seat;
+      }
+      while (round.some((play) => play.seat === turn) || current.hand.folded[turn]) turn = (turn + 1) % config.players;
+      const options = held[turn]!;
+      const card = pickCard(round, turn, options);
+      if (card === undefined) return null;
+      held[turn] = options.filter((c) => c !== card);
+      round.push({ seat: turn, card });
+    }
+    return null;
+  }
 }
 
 /** Decide usando solo la información que tendría ese jugador: sus cartas, la mesa y las señas que vio. */
@@ -39,13 +98,13 @@ export function botAction(
       const open = envidoCall('envido');
       if (open) return open;
     }
-    if (has('truco') && power >= 11 && random() < 0.5) return { t: 'truco' };
-    // Pesa la mejor carta que le queda y cómo viene la mano; a veces acepta de farol.
-    const best = Math.max(...remaining.map(strength), 0);
-    const won = hand.roundWinners.filter((w) => w === teamOf(seat)).length;
-    const lost = hand.roundWinners.filter((w) => w !== null && w !== teamOf(seat)).length;
-    const want = best * 0.6 + power * 0.4 + (won - lost) * 2;
-    return want >= 8 || random() < 0.25 ? { t: 'quiero' } : { t: 'noquiero' };
+    // Mira lo que hay en la mesa: una mano imposible no se acepta y una segura se sube.
+    const chance = winChance(state, seat, random);
+    if (has('truco') && chance >= 0.85 && random() < 0.6) return { t: 'truco' };
+    // Quien ya perdió una baza y escucha truco desconfía más, y no acepta de farol.
+    const behind = hand.roundWinners.some((w) => w !== null && w !== teamOf(seat));
+    const needed = 0.42 + 0.08 * (hand.trucoPending.level - 1) + (behind ? 0.12 : 0);
+    return chance >= needed || (!behind && chance >= 0.12 && random() < 0.2) ? { t: 'quiero' } : { t: 'noquiero' };
   }
 
   if (hand.turn !== seat) return null;
@@ -54,11 +113,16 @@ export function botAction(
     const open = envidoCall('envido');
     if (open) return open;
   }
-  if (tantos >= 28 && random() < 0.8) {
+  if (tantos >= SURE_ENVIDO || (tantos >= 28 && random() < 0.8)) {
     const open = envidoCall(tantos >= 31 ? 'real' : 'envido');
     if (open) return open;
   }
-  if (has('truco') && (power >= 11 ? random() < 0.5 : random() < 0.06)) return { t: 'truco' };
+  // Con envido para avisar no canta truco en la primera: si se lo aceptan, el envido ya no se puede cantar.
+  const keepsEnvido = tantos >= SURE_ENVIDO && hand.roundWinners.length === 0 && !hand.envidoDone && !hand.florDone;
+  if (has('truco') && !keepsEnvido) {
+    const chance = winChance(state, seat, random);
+    if (chance >= 0.72 ? random() < 0.6 : chance >= 0.2 && random() < 0.05) return { t: 'truco' };
+  }
 
   const card = chooseCard(state, seat, remaining);
   return card === undefined ? null : { t: 'play', card };
@@ -80,8 +144,9 @@ function senaForCard(card: CardId): SenaId {
 /** La próxima seña verdadera para el compañero: primero el envido y después la mejor carta. */
 export function botSena(state: GameState, seat: number, done: ReadonlySet<SenaId>): SenaId | null {
   const { hand } = state;
-  const canUseEnvido = hand.roundWinners.length === 0 && !hand.envidoDone && !hand.florDone;
-  if (canUseEnvido && envidoPoints(hand.dealt[seat]!) >= 30 && !done.has('envido')) return 'envido';
+  // Solo sirve avisar si un compañero todavía lo puede cantar; si le toca a él, lo canta directamente.
+  const partnerCanSing = hand.dealt.some((_, s) => s !== seat && teamOf(s) === teamOf(seat) && canOpenEnvido(state, s));
+  if (partnerCanSing && envidoPoints(hand.dealt[seat]!) >= SURE_ENVIDO && !done.has('envido')) return 'envido';
   const remaining = hand.cards[seat]!;
   if (remaining.length === 0) return null;
   const best = remaining.reduce((a, b) => (strength(b) > strength(a) ? b : a));
@@ -90,8 +155,11 @@ export function botSena(state: GameState, seat: number, done: ReadonlySet<SenaId
 }
 
 function chooseCard(state: GameState, seat: number, cards: readonly CardId[]): CardId | undefined {
+  return pickCard(state.hand.rounds[state.hand.rounds.length - 1]!, seat, cards);
+}
+
+function pickCard(round: readonly { seat: number; card: CardId }[], seat: number, cards: readonly CardId[]): CardId | undefined {
   const sorted = [...cards].sort((a, b) => strength(a) - strength(b));
-  const round = state.hand.rounds[state.hand.rounds.length - 1]!;
   if (round.length === 0) return sorted[sorted.length - 1];
   const best = round.reduce((a, b) => (strength(b.card) > strength(a.card) ? b : a));
   if (teamOf(best.seat) === teamOf(seat)) return sorted[0];

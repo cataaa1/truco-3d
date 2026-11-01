@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { botAction, botSena } from '../src/engine/bot';
+import { botAction, botSena, winChance } from '../src/engine/bot';
 import { envidoPoints, hasFlor, makeCard, strength } from '../src/engine/cards';
 import {
   applyAction,
@@ -296,6 +296,8 @@ describe('señas de los bots', () => {
     const s = rigged([
       [c('oro', 7), c('oro', 6), c('espada', 1)],
       [c('copa', 4), c('copa', 5), c('copa', 6)],
+      [c('basto', 4), c('basto', 5), c('oro', 10)],
+      [c('espada', 4), c('basto', 6), c('oro', 5)],
     ]);
     const done = new Set<SenaId>();
     expect(botSena(s, 0, done)).toBe('envido');
@@ -303,6 +305,36 @@ describe('señas de los bots', () => {
     expect(botSena(s, 0, done)).toBe('ancho_espada');
     done.add('ancho_espada');
     expect(botSena(s, 0, done)).toBe(null);
+  });
+
+  const envidoHands = [
+    [c('oro', 7), c('oro', 6), c('copa', 4)],
+    [c('copa', 5), c('copa', 6), c('espada', 4)],
+    [c('basto', 4), c('basto', 5), c('oro', 10)],
+    [c('espada', 5), c('basto', 6), c('oro', 5)],
+  ];
+
+  it('no avisa el envido si su compañero ya no lo puede cantar', () => {
+    const s = rigged(envidoHands);
+    expect(botSena(s, 0, new Set())).toBe('envido');
+    applyAction(s, 0, { t: 'play', card: c('copa', 4) });
+    applyAction(s, 1, { t: 'play', card: c('copa', 5) });
+    applyAction(s, 2, { t: 'play', card: c('basto', 4) });
+    expect(botSena(s, 0, new Set())).not.toBe('envido');
+  });
+
+  it('el que puede cantarlo no avisa: lo canta', () => {
+    const hands = [envidoHands[2]!, envidoHands[1]!, envidoHands[0]!, envidoHands[3]!];
+    const s = rigged(hands);
+    applyAction(s, 0, { t: 'play', card: c('basto', 4) });
+    applyAction(s, 1, { t: 'play', card: c('copa', 5) });
+    expect(botSena(s, 2, new Set())).not.toBe('envido');
+    expect(botAction(s, 2, () => 0.99)?.t).toBe('envido');
+  });
+
+  it('con envido para avisar no canta truco en la primera', () => {
+    const strong = [[c('oro', 7), c('oro', 6), c('espada', 1)], envidoHands[1]!, envidoHands[2]!, envidoHands[3]!];
+    for (const roll of [0, 0.3, 0.99]) expect(botAction(rigged(strong), 0, () => roll)?.t).toBe('play');
   });
 
   it('sin nada que valga la pena, lo dice', () => {
@@ -412,3 +444,68 @@ function pickActor(s: GameState, random: () => number): number {
   return s.hand.turn;
 }
 
+describe('el bot mira las cartas de la mesa antes de aceptar el truco', () => {
+  const rolls = [0, 0.1, 0.5, 0.99];
+  let seed = 7;
+  const varied = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+
+  it('sabe cuándo ya no puede ganar', () => {
+    const s = rigged([
+      [c('espada', 1), c('basto', 1), c('copa', 4)],
+      [c('espada', 7), c('oro', 7), c('oro', 3)],
+    ]);
+    applyAction(s, 0, { t: 'play', card: c('espada', 1) });
+    applyAction(s, 1, { t: 'play', card: c('oro', 3) });
+    applyAction(s, 0, { t: 'play', card: c('basto', 1) });
+    expect(winChance(s, 1, varied)).toBe(0);
+  });
+
+  it('con el ancho de espada en la mesa y cartas flojas no acepta nunca', () => {
+    const afterFirst = () => {
+      const s = rigged([
+        [c('espada', 1), c('basto', 1), c('copa', 4)],
+        [c('oro', 4), c('copa', 6), c('basto', 5)],
+      ]);
+      applyAction(s, 0, { t: 'play', card: c('espada', 1) });
+      applyAction(s, 1, { t: 'play', card: c('oro', 4) });
+      applyAction(s, 0, { t: 'truco' });
+      return s;
+    };
+    expect(afterFirst().hand.trucoPending).not.toBeNull();
+    for (const roll of rolls) expect(botAction(afterFirst(), 1, () => roll)).toEqual({ t: 'noquiero' });
+    for (let i = 0; i < 40; i++) expect(botAction(afterFirst(), 1, varied)).toEqual({ t: 'noquiero' });
+  });
+
+  it('con la mano asegurada nunca rechaza', () => {
+    for (let i = 0; i < 20; i++) {
+      const s = rigged([
+        [c('copa', 4), c('copa', 5), c('copa', 6)],
+        [c('espada', 1), c('basto', 1), c('oro', 4)],
+      ]);
+      applyAction(s, 0, { t: 'play', card: c('copa', 4) });
+      applyAction(s, 1, { t: 'play', card: c('espada', 1) });
+      applyAction(s, 1, { t: 'play', card: c('basto', 1) });
+      applyAction(s, 0, { t: 'truco' });
+      expect(botAction(s, 1, varied)?.t).not.toBe('noquiero');
+    }
+  });
+
+  it('con buenas cartas acepta más seguido que con malas', () => {
+    const accepted = (botCards: number[]) => {
+      let yes = 0;
+      for (let i = 0; i < 60; i++) {
+        const s = rigged([[c('oro', 4), c('copa', 5), c('espada', 6)], botCards]);
+        applyAction(s, 0, { t: 'truco' });
+        if (botAction(s, 1, varied)?.t !== 'noquiero') yes++;
+      }
+      return yes;
+    };
+    const good = accepted([c('espada', 7), c('oro', 3), c('basto', 3)]);
+    const bad = accepted([c('oro', 4), c('copa', 6), c('basto', 5)]);
+    expect(good).toBeGreaterThan(50);
+    expect(bad).toBeLessThan(30);
+  });
+});

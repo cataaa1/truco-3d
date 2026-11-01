@@ -145,7 +145,7 @@ function isLastTwo(state: GameState, seat: number): boolean {
   return players <= 2 || (seat - state.hand.mano + players) % players >= players - 2;
 }
 
-function canOpenEnvido(state: GameState, seat: number): boolean {
+export function canOpenEnvido(state: GameState, seat: number): boolean {
   const { hand } = state;
   if (!isLastTwo(state, seat)) return false;
   if (hand.roundWinners.length > 0 || hand.envidoDone || hand.florDone) return false;
