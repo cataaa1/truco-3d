@@ -36,8 +36,30 @@ LAMPS = [
     ((3.2, 2.1, 0.2), (1.0, 0.62, 0.32), 1.5),
     ((-3.2, 1.9, 0.6), (0.85, 0.85, 0.8), 2.4),
     ((0.0, 3.0, 2.8), (1.0, 0.72, 0.45), 1.8),
+    ((-2.75, 2.2, 1.6), (1.0, 0.72, 0.42), 0.9),
+    ((2.85, 2.2, 0.45), (1.0, 0.72, 0.42), 0.8),
+    ((2.75, 2.2, 2.6), (1.0, 0.72, 0.42), 0.9),
+    ((-2.8, 2.2, -0.4), (1.0, 0.72, 0.42), 0.8),
+    ((-2.4, 2.1, 3.7), (1.0, 0.68, 0.38), 0.8),
+    ((0.75, 2.1, 3.7), (1.0, 0.68, 0.38), 0.8),
 ]
-AMBIENT = (0.13, 0.095, 0.075)
+AMBIENT = (0.1, 0.072, 0.058)
+
+# Lo que hace sombra sobre el piso: (x, z, radio, cuánto oscurece).
+FLOOR_SHADOWS = [
+    (0.0, 0.0, 1.55, 0.62),
+    (-2.75, 1.6, 0.62, 0.55),
+    (2.75, 2.6, 0.62, 0.55),
+    (2.85, 0.45, 0.62, 0.55),
+    (-2.8, -0.4, 0.62, 0.55),
+    (-2.4, -1.84, 0.26, 0.45),
+    (-1.25, -1.84, 0.26, 0.45),
+    (1.1, -1.84, 0.26, 0.45),
+    (2.3, -1.84, 0.26, 0.45),
+    (3.05, 3.4, 0.62, 0.6),
+    (-3.1, 3.3, 0.5, 0.5),
+    (-0.75, 3.72, 0.7, 0.45),
+]
 
 
 def srgb(hex_color):
@@ -79,11 +101,20 @@ def light_at(pos, normal, baked=True):
         amount = power * (0.25 + 0.75 * facing) / (1.0 + dist2)
         for i in range(3):
             total[i] += color[i] * amount
-    # Sombra falsa debajo de la mesa y oscurecido en los rincones del piso.
+    # Sombras de contacto sobre el piso y al pie del mostrador.
+    shade = 1.0
     if pos[1] < 0.1:
-        shade = min(1.0, 0.45 + 0.55 * (math.hypot(pos[0], pos[2]) / 1.6) ** 2)
-        total = [c * shade for c in total]
-    return tuple(min(1.0, c) for c in total)
+        for x, z, radius, strength in FLOOR_SHADOWS:
+            t = max(0.0, min(1.0, 1 - math.hypot(pos[0] - x, pos[2] - z) / radius))
+            shade *= 1 - strength * t * t * (3 - 2 * t)
+        t = max(0.0, min(1.0, 1 - (pos[2] + 2.14) / 0.7))
+        shade *= 1 - 0.5 * t * t
+    # Los rincones juntan menos luz: el salón gana profundidad sin calcular sombras.
+    corner = lambda d, floor, reach: floor + (1 - floor) * max(0.0, min(1.0, d / reach)) ** 0.7
+    shade *= corner(HEIGHT - pos[1], 0.55, 0.5) * corner(pos[1], 0.68, 0.4)
+    shade *= corner(X_MAX - pos[0], 0.72, 0.5) * corner(pos[0] - X_MIN, 0.72, 0.5)
+    shade *= corner(Z_MAX - pos[2], 0.72, 0.5) * corner(pos[2] - Z_MIN, 0.72, 0.5)
+    return tuple(min(1.0, c * shade) for c in total)
 
 
 class Part:
@@ -541,68 +572,364 @@ def build_back_bar(room):
     return counter_z
 
 
+def wall_box(part, wall, a, y, width, height, depth, region="wood_dark", tint=WHITE, off=0.0):
+    """Listón apoyado sobre una pared. a es la posición a lo largo de la pared."""
+    axis, value, sign = wall
+    d = value + sign * (off + depth / 2)
+    if axis == "x":
+        part.box((d, y, a), (depth, height, width), region=region, tint=tint)
+    else:
+        part.box((a, y, d), (width, height, depth), region=region, tint=tint)
+
+
+def wainscot(part, wall, a0, a1, top=0.98, gaps=()):
+    """Zócalo con molduras y paneles en relieve, cortado donde hay una puerta o un mueble."""
+    start = a0
+    for gap0, gap1 in [*gaps, (a1, a1)]:
+        length = gap0 - start
+        if length > 0.2:
+            mid = (start + gap0) / 2
+            wall_box(part, wall, mid, top / 2, length, top, 0.012, "wood_dark", MAHOGANY_DARK)
+            wall_box(part, wall, mid, 0.08, length, 0.16, 0.034, "wood_dark", WOOD_BLACK)
+            wall_box(part, wall, mid, top, length, 0.05, 0.05, "wood_dark", MAHOGANY)
+            wall_box(part, wall, mid, top - 0.045, length, 0.025, 0.03, "wood", MAHOGANY_DARK)
+            count = max(1, round(length / 0.72))
+            width = length / count
+            low, high = 0.16, top - 0.06
+            for i in range(count + 1):
+                wall_box(part, wall, start + width * i, (low + high) / 2, 0.055, high - low, 0.026, "wood", MAHOGANY_DARK)
+            for i in range(count):
+                c = start + width * (i + 0.5)
+                wall_box(part, wall, c, (low + high) / 2, width - 0.16, high - low - 0.1, 0.03, "wood", MAHOGANY)
+        start = gap1
+
+
+def pendant(part, x, z, y, shade=None):
+    """Lámpara colgante con pantalla de vidrio verde."""
+    shade = shade or srgb(0x2f6b4e)
+    limb(part, (x, HEIGHT, z), (x, y + 0.2, z), 0.007, 0.007, srgb(0x2a2018), segments=4)
+    part.lathe((x, HEIGHT - 0.05, z), [(0.06, 0.05), (0.03, 0.01), (0, 0)], segments=8, tint=BRASS)
+    part.lathe((x, y, z), [(0.17, 0), (0.15, 0.03), (0.07, 0.15), (0.025, 0.2), (0, 0.21)], segments=10, tint=shade)
+    part.lathe((x, y, z), [(0, 0.0), (0.15, 0.0)], segments=10, tint=srgb(0xffe6b0), glow=True)
+
+
+def sconce(part, wall, a, y):
+    axis, value, sign = wall
+    at = lambda depth, height: (value + sign * depth, height, a) if axis == "x" else (a, height, value + sign * depth)
+    wall_box(part, wall, a, y, 0.09, 0.14, 0.015, "white", BRASS)
+    limb(part, at(0.01, y), at(0.12, y + 0.03), 0.009, 0.007, BRASS, segments=4)
+    center = at(0.14, y + 0.03)
+    part.lathe(center, [(0, 0.0), (0.075, 0.04), (0.085, 0.12), (0.04, 0.17), (0, 0.17)], segments=8, tint=srgb(0xfff0c0), glow=True)
+
+
+def curtain(part, x, z0, z1, y0, y1):
+    """Visillo plegado a media ventana, con su barra de bronce."""
+    folds = 22
+    side = 1 if x < 0 else -1
+    lace = srgb(0xfff6e2)
+    for i in range(folds):
+        a0, a1 = lerp(z0, z1, i / folds), lerp(z0, z1, (i + 1) / folds)
+        tint = scale(lace, 0.84 if i % 2 else 1.0)
+        depth = 0.03 if i % 2 else 0.055
+        depth1 = 0.055 if i % 2 else 0.03
+        part.face(((x + side * depth, y0, a0), (x + side * depth1, y0, a1), (x + side * depth1, y1, a1), (x + side * depth, y1, a0)), "white", ((0, 1), (1, 1), (1, 0), (0, 0)), tint, glow=True)
+    limb(part, (x + side * 0.05, y1 + 0.01, z0 - 0.03), (x + side * 0.05, y1 + 0.01, z1 + 0.03), 0.009, 0.009, BRASS, segments=5)
+
+
+def ashtray(part, x, y, z):
+    part.lathe((x, y, z), [(0.045, 0), (0.05, 0.016), (0.036, 0.016), (0.03, 0.006), (0, 0.006)], segments=8, tint=srgb(0xb9b2a4))
+
+
+def cafe_table(part, x, z, chairs, goods=0):
+    """Mesita de pie de hierro con tapa de mármol y lo que dejó el último cliente."""
+    part.lathe((x, 0, z), [(0.26, 0), (0.1, 0.04), (0.035, 0.1), (0.03, 0.4), (0.045, 0.6), (0.03, 0.69)], segments=10, tint=srgb(0x1f1a16))
+    part.lathe((x, 0.69, z), [(0.09, 0), (0.42, 0.02), (0.43, 0.04), (0.42, 0.055), (0, 0.055)], segments=14, region="plaster", tint=srgb(0xd9d0c0))
+    for angle in chairs:
+        thonet(part, x + math.sin(angle) * 0.62, z + math.cos(angle) * 0.62, angle + math.pi)
+    top = 0.745
+    ashtray(part, x - 0.12, top, z + 0.08)
+    if goods == 0:
+        glass(part, x + 0.08, top, z + 0.14)
+        glass(part, x + 0.2, top, z - 0.06, tall=True)
+        siphon(part, x - 0.04, top, z - 0.16, TURQUOISE)
+    elif goods == 1:
+        part.lathe((x + 0.1, top, z), [(0.03, 0), (0.03, 0.2), (0.012, 0.28), (0, 0.28)], segments=6, tint=random.choice(GLASS_COLORS))
+        glass(part, x - 0.02, top, z - 0.17)
+        part.box((x + 0.03, top + 0.012, z + 0.2), (0.07, 0.025, 0.1), tint=srgb(0xa33024), yaw=0.4)
+    else:
+        stack(part, x + 0.1, top, z + 0.1, count=2, radius=0.08)
+        glass(part, x + 0.14, top + 0.03, z + 0.1)
+        part.quad((x - 0.2, top + 0.003, z - 0.05), (x + 0.04, top + 0.003, z - 0.18), (x + 0.1, top + 0.003, z - 0.03), (x - 0.14, top + 0.003, z + 0.1), region="plaster", tint=srgb(0xd8cfb8))
+
+
+def barrel(part, x, y, z, radius=0.26, tall=0.68):
+    profile = [(radius * 0.84, 0), (radius * 0.97, tall * 0.25), (radius, tall * 0.5), (radius * 0.97, tall * 0.75), (radius * 0.84, tall)]
+    part.lathe((x, y, z), profile, segments=14, region="wood", tint=srgb(0xb07a48))
+    part.lathe((x, y + tall, z), [(radius * 0.84, 0), (0, 0)], segments=14, region="wood_dark", tint=MAHOGANY)
+    hoop = srgb(0x2a2420)
+    for t in (0.1, 0.32, 0.68, 0.9):
+        r = radius * (0.84 + 0.16 * math.sin(math.pi * t)) + 0.004
+        part.lathe((x, y + tall * t, z), [(r, 0), (r, 0.022)], segments=14, tint=hoop)
+    # Canilla.
+    limb(part, (x - radius * 0.72, y + tall * 0.2, z - radius * 0.72), (x - radius * 0.86, y + tall * 0.19, z - radius * 0.86), 0.012, 0.01, BRASS, segments=5)
+
+
+def demijohn(part, x, z, color):
+    """Damajuana con canasto de mimbre."""
+    wicker = srgb(0xb08a4a)
+    part.lathe((x, 0, z), [(0.16, 0), (0.2, 0.08), (0.205, 0.22), (0.17, 0.33)], segments=12, region="wood", tint=wicker)
+    part.lathe((x, 0.33, z), [(0.17, 0), (0.1, 0.09), (0.03, 0.14), (0.028, 0.22), (0.035, 0.23), (0, 0.23)], segments=10, tint=color)
+
+
+def soda_crate(part, x, y, z, color):
+    part.box((x, y + 0.09, z), (0.44, 0.18, 0.33), region="wood", tint=srgb(0x9a7044))
+    for i in (-1, 0, 1):
+        for j in (-0.5, 0.5):
+            siphon(part, x + i * 0.14, y + 0.06, z + j * 0.15, color)
+
+
+def bandoneon(part, x, y, z):
+    black = srgb(0x171310)
+    part.box((x - 0.12, y + 0.09, z), (0.085, 0.18, 0.18), tint=black)
+    part.box((x + 0.12, y + 0.09, z), (0.085, 0.18, 0.18), tint=black)
+    for i in range(5):
+        part.box((x - 0.06 + i * 0.03, y + 0.088, z), (0.02, 0.17 - 0.012 * (i % 2), 0.17 - 0.012 * (i % 2)), tint=scale(MAHOGANY, 0.8 if i % 2 else 1.0))
+    # Botones de nácar.
+    for side in (-1, 1):
+        for row in range(3):
+            for col in range(3):
+                part.box((x + side * 0.12 + (col - 1) * 0.022, y + 0.05 + row * 0.04, z + 0.092), (0.012, 0.012, 0.006), tint=srgb(0xe9e0cf))
+
+
+def radio(part, x, y, z):
+    part.box((x, y + 0.14, z), (0.36, 0.28, 0.17), region="wood", tint=MAHOGANY)
+    part.lathe((x, y + 0.28, z), [(0.1, 0), (0, 0.0)], segments=6, tint=MAHOGANY)
+    front_z = z + 0.087
+    part.quad((x - 0.14, y + 0.14, front_z), (x + 0.14, y + 0.14, front_z), (x + 0.14, y + 0.24, front_z), (x - 0.14, y + 0.24, front_z), region="dial", glow=True)
+    part.quad((x - 0.14, y + 0.04, front_z), (x + 0.14, y + 0.04, front_z), (x + 0.14, y + 0.125, front_z), (x - 0.14, y + 0.125, front_z), tint=srgb(0x3a2a18))
+    for side in (-1, 1):
+        part.lathe((x + side * 0.09, y + 0.07, front_z), [(0.018, 0), (0, 0.012)], segments=6, tint=BRASS)
+
+
+def trophy(part, x, y, z):
+    part.lathe((x, y, z), [(0.05, 0), (0.045, 0.03), (0.012, 0.05), (0.012, 0.11), (0.05, 0.14), (0.07, 0.22), (0.075, 0.27), (0, 0.27)], segments=10, tint=BRASS)
+
+
+def coat_rack(part, x, z):
+    wood = srgb(0x3a2214)
+    part.lathe((x, 0, z), [(0.2, 0), (0.17, 0.02), (0.03, 0.06), (0.024, 1.7), (0.035, 1.76), (0, 1.8)], segments=8, region="wood_dark", tint=wood)
+    for arm in range(4):
+        angle = arm * math.pi / 2 + 0.4
+        tip = (x + math.cos(angle) * 0.2, 1.74, z + math.sin(angle) * 0.2)
+        limb(part, (x, 1.62, z), tip, 0.012, 0.01, wood, segments=4)
+    # Sombrero y sobretodo colgados.
+    hat = srgb(0x2c2622)
+    hx, hz = x + 0.17, z - 0.1
+    part.lathe((hx, 1.76, hz), [(0.15, 0), (0.15, 0.008), (0.09, 0.015), (0.085, 0.09), (0.05, 0.115), (0, 0.11)], segments=12, tint=hat)
+    part.lathe((hx, 1.788, hz), [(0.087, 0), (0.087, 0.018)], segments=12, tint=srgb(0x7a1f1a))
+    coat = srgb(0x3c352c)
+    cx, cz = x - 0.14, z - 0.14
+    part.lathe((cx, 0.72, cz), [(0.15, 0), (0.17, 0.3), (0.18, 0.7), (0.12, 0.92), (0.03, 0.98), (0, 1.0)], segments=10, tint=coat)
+    part.box((cx + 0.1, 1.2, cz + 0.1), (0.03, 0.72, 0.03), tint=scale(coat, 0.7), yaw=0.7)
+
+
+def bunting(part, x0, x1, z, y, sag=0.34, colors=None):
+    """Banderines colgados de pared a pared."""
+    colors = colors or [(srgb(0x58b7e6), srgb(0xf4e6c4)), (srgb(0xf4e6c4), srgb(0x58b7e6))]
+    count = 16
+    line = lambda t: (lerp(x0, x1, t), y - sag * 4 * t * (1 - t), z)
+    for i in range(count):
+        a, b = line(i / count), line((i + 1) / count)
+        limb(part, a, b, 0.004, 0.004, srgb(0x2a2018), segments=3)
+        color = colors[i % len(colors)][0]
+        c = (lerp(a[0], b[0], 0.15), a[1] - 0.005, z)
+        d = (lerp(a[0], b[0], 0.85), b[1] - 0.005, z)
+        tip = ((c[0] + d[0]) / 2, (c[1] + d[1]) / 2 - 0.24, z + 0.01)
+        part.face((c, d, tip), "white", ((0, 0), (1, 0), (0.5, 1)), color, normal=(0, 0, 1))
+
+
+def espresso_machine(part, x, top, z):
+    chrome = srgb(0xc8c4b8)
+    plan = rounded_plan(x, z, 0.28, 0.14, 0.1)
+    extrude(part, plan, top, top + 0.06, tint=srgb(0x2a2018))
+    extrude(part, plan, top + 0.06, top + 0.3, tint=chrome)
+    extrude(part, plan, top + 0.3, top + 0.33, tint=BRASS)
+    part.lathe((x, top + 0.33, z), [(0.15, 0), (0.15, 0.1), (0.09, 0.19), (0.03, 0.22), (0, 0.23)], segments=12, tint=chrome)
+    part.lathe((x, top + 0.56, z), [(0.03, 0), (0.012, 0.03), (0.025, 0.06), (0, 0.08)], segments=6, tint=BRASS)
+    for side in (-1, 1):
+        gx = x + side * 0.13
+        limb(part, (gx, top + 0.2, z + 0.13), (gx, top + 0.2, z + 0.2), 0.03, 0.028, chrome, segments=8)
+        limb(part, (gx, top + 0.17, z + 0.2), (gx, top + 0.17, z + 0.32), 0.012, 0.014, srgb(0x171310), segments=5)
+        glass(part, gx, top, z + 0.2)
+    for i in range(4):
+        part.lathe((x - 0.15 + i * 0.1, top + 0.33, z - 0.09), [(0.03, 0), (0.038, 0.05), (0, 0.05)], segments=6, tint=CREAM_WARE)
+
+
 def build_room():
     room = Part("boliche")
     width, depth = X_MAX - X_MIN, Z_MAX - Z_MIN
     nx, nz = int(width), int(depth)
+    right = ("x", X_MAX, -1)
+    left = ("x", X_MIN, 1)
+    back_wall = ("z", Z_MAX, -1)
+    paper = srgb(0xd8b8a0)
 
-    # Piso, techo y paredes.
-    room.patch((X_MIN, 0, Z_MIN), (width, 0, 0), (0, 0, depth), nx * 2, nz * 2, "tile", repeat=(2, 2), normal=(0, 1, 0))
-    room.patch((-2.05, 0.006, -2.05), (4.1, 0, 0), (0, 0, 4.1), 4, 4, "rug", repeat=(1, 1), normal=(0, 1, 0))
-    ceiling = srgb(0x6e2c22)
-    room.patch((X_MIN, HEIGHT, Z_MIN), (width, 0, 0), (0, 0, depth), nx, nz, "plaster", tint=ceiling, normal=(0, -1, 0))
-    for z in (-2.2, -0.2, 1.8, 3.4):
-        room.box((0, HEIGHT - 0.09, z), (width, 0.18, 0.16), region="wood_dark", tint=WOOD_BLACK)
+    # Piso con guarda de baldosas oscuras, bien subdividido para llevar las sombras horneadas.
+    room.patch((X_MIN, 0, Z_MIN), (width, 0, 0), (0, 0, depth), nx * 4, nz * 4, "tile", repeat=(4, 4), normal=(0, 1, 0))
+    room.patch((-2.05, 0.006, -2.05), (4.1, 0, 0), (0, 0, 4.1), 8, 8, "rug", repeat=(2, 2), normal=(0, 1, 0))
+    guard = srgb(0x4a2c1c)
+    for a in (X_MIN + 0.13, X_MAX - 0.13):
+        room.patch((a - 0.11, 0.004, Z_MIN), (0.22, 0, 0), (0, 0, depth), 1, nz, "plaster", tint=guard, normal=(0, 1, 0))
+    for a in (Z_MAX - 0.13, ):
+        room.patch((X_MIN, 0.004, a - 0.11), (width, 0, 0), (0, 0, 0.22), nx, 1, "plaster", tint=guard, normal=(0, 1, 0))
 
-    # Pared del frente: yeso arriba, atrás de la estantería.
-    room.patch((X_MIN, 0, Z_MIN), (width, 0, 0), (0, HEIGHT, 0), nx, 4, "plaster", tint=srgb(0x9a7a56), normal=(0, 0, 1))
+    # Techo de chapa estampada, con nervios, vigas y una roseta sobre la lámpara.
+    tin = srgb(0xb8a27a)
+    room.patch((X_MIN, HEIGHT, Z_MIN), (width, 0, 0), (0, 0, depth), nx * 2, nz * 2, "tin", tint=tin, repeat=(1, 1), normal=(0, -1, 0))
+    rib = srgb(0x8e7a58)
+    for i in range(1, 6):
+        room.box((X_MIN + width * i / 6, HEIGHT - 0.022, (Z_MIN + Z_MAX) / 2), (0.05, 0.044, depth), tint=rib)
+    for i in range(1, 7):
+        room.box((0, HEIGHT - 0.022, Z_MIN + depth * i / 7), (width, 0.044, 0.05), tint=rib)
+    for z in (-1.15, 1.45):
+        room.box((0, HEIGHT - 0.11, z), (width, 0.2, 0.2), region="wood_dark", tint=MAHOGANY_DARK)
+        room.box((0, HEIGHT - 0.215, z), (width, 0.03, 0.25), region="wood", tint=MAHOGANY)
+        for x in (X_MIN + 0.09, X_MAX - 0.09):
+            room.box((x, HEIGHT - 0.4, z), (0.14, 0.34, 0.14), region="wood_dark", tint=MAHOGANY_DARK)
+    room.lathe((0, HEIGHT - 0.07, 0), [(0.36, 0.07), (0.33, 0.045), (0.24, 0.05), (0.2, 0.02), (0.08, 0.015), (0.04, 0)], segments=16, region="plaster", tint=srgb(0xd8c8a4))
+
+    # Cornisa alrededor de todo el salón.
+    for wall, a, length in ((right, (Z_MIN + Z_MAX) / 2, depth), (left, (Z_MIN + Z_MAX) / 2, depth), (back_wall, 0, width), (("z", Z_MIN, 1), 0, width)):
+        wall_box(room, wall, a, HEIGHT - 0.1, length, 0.2, 0.06, "wood_dark", MAHOGANY_DARK)
+        wall_box(room, wall, a, HEIGHT - 0.22, length, 0.04, 0.08, "wood", MAHOGANY)
+        wall_box(room, wall, a, HEIGHT - 0.27, length, 0.03, 0.04, "wood_dark", MAHOGANY_DARK)
+
+    # Pared del frente: empapelada arriba y a los costados de la estantería.
+    room.patch((X_MIN, 0, Z_MIN), (width, 0, 0), (0, HEIGHT, 0), nx * 2, 8, "wallpaper", tint=paper, repeat=(1, 1), normal=(0, 0, 1))
 
     # Pared derecha: ladrillo, espejos y cuadros, como en los boliches de San Telmo.
-    room.patch((X_MAX, 0, Z_MIN), (0, 0, depth), (0, HEIGHT, 0), nz, 4, "brick", repeat=(2, 2), normal=(-1, 0, 0))
-    wall = ("x", X_MAX, -1)
-    frame(room, -1.9, -1.0, 1.15, 2.45, wall, "mirror")
-    frame(room, -0.8, 1.25, 2.12, 2.95, wall, "sign_red", thickness=0.02)
-    frame(room, -0.8, -0.1, 1.15, 1.85, wall, "portrait")
-    frame(room, 0.1, 0.8, 1.15, 1.85, wall, "landscape")
-    frame(room, 1.0, 1.75, 1.0, 2.0, wall, "mirror")
-    frame(room, 1.95, 2.55, 1.2, 2.0, wall, "poster", thickness=0.02)
-    frame(room, 2.0, 3.0, 2.25, 2.75, wall, "sign_small", thickness=0.02)
-    # Reloj de pared y dos apliques de luz.
-    frame(room, -3.3, -2.5, 2.25, 3.05, wall, "clock")
+    room.patch((X_MAX, 0, Z_MIN), (0, 0, depth), (0, HEIGHT, 0), nz * 2, 8, "brick", repeat=(4, 4), normal=(-1, 0, 0))
+    wainscot(room, right, -2.1, Z_MAX, top=0.82)
+    frame(room, -1.9, -1.0, 1.15, 2.45, right, "mirror")
+    frame(room, -0.8, 1.25, 2.12, 2.95, right, "sign_red", thickness=0.02)
+    frame(room, -0.8, -0.1, 1.15, 1.85, right, "portrait")
+    frame(room, 0.1, 0.8, 1.15, 1.85, right, "landscape")
+    frame(room, 1.0, 1.75, 1.0, 2.0, right, "mirror")
+    frame(room, 1.95, 2.55, 1.2, 2.0, right, "poster", thickness=0.02)
+    frame(room, 2.0, 3.0, 2.25, 2.75, right, "sign_small", thickness=0.02)
+    frame(room, 2.72, 3.5, 1.05, 2.05, right, "chalkboard", thickness=0.04)
+    # Reloj de pared, almanaque y dos apliques de luz.
+    frame(room, -3.3, -2.5, 2.25, 3.05, right, "clock")
+    frame(room, -2.45, -2.05, 1.35, 1.75, right, "calendar", thickness=0.012)
     for z in (-2.0, 0.95):
         room.lathe((X_MAX - 0.13, 2.05, z), [(0, 0.0), (0.09, 0.05), (0.1, 0.15), (0.05, 0.2), (0, 0.2)], segments=8, tint=srgb(0xfff0c0), glow=True)
         room.box((X_MAX - 0.07, 2.02, z), (0.13, 0.03, 0.03), tint=BRASS)
 
-    # Pared izquierda: zócalo de madera y ventanales pintados a la calle.
-    room.patch((X_MIN, 0, Z_MIN), (0, 0, depth), (0, 1.0, 0), nz, 1, "wood", tint=WOOD_RED, repeat=(1, 1), normal=(1, 0, 0))
-    room.patch((X_MIN, 1.0, Z_MIN), (0, 0, depth), (0, HEIGHT - 1.0, 0), nz, 3, "plaster", tint=srgb(0xc2a67c), normal=(1, 0, 0))
-    window = ("x", X_MIN, 1)
-    frame(room, -2.5, -0.9, 1.05, 2.75, window, "glass_bar", thickness=0.07)
-    frame(room, -0.75, 0.85, 1.05, 2.75, window, "glass_cafe", thickness=0.07)
-    frame(room, 1.0, 2.6, 1.05, 2.75, window, "stained", thickness=0.07)
+    # Pared izquierda: empapelado, zócalo tallado y ventanales a la calle con visillos.
+    room.patch((X_MIN, 0, Z_MIN), (0, 0, depth), (0, HEIGHT, 0), nz * 2, 8, "wallpaper", tint=paper, repeat=(1, 1), normal=(1, 0, 0))
+    wainscot(room, left, -2.15, Z_MAX)
+    for z0, z1, region in ((-2.5, -0.9, "glass_bar"), (-0.75, 0.85, "glass_cafe"), (1.0, 2.6, "stained")):
+        frame(room, z0, z1, 1.05, 2.75, left, region, thickness=0.07)
+        wall_box(room, left, (z0 + z1) / 2, 1.04, z1 - z0 + 0.14, 0.04, 0.11, "wood", MAHOGANY)
+        wall_box(room, left, (z0 + z1) / 2, 2.8, z1 - z0 + 0.1, 0.09, 0.07, "wood_dark", MAHOGANY_DARK)
+        wall_box(room, left, (z0 + z1) / 2, 1.9, 0.035, 1.7, 0.035, "wood_dark", MAHOGANY_DARK, off=0.02)
+        curtain(room, X_MIN + 0.03, z0 + 0.08, z1 - 0.08, 1.08, 1.72)
 
-    # Pared de atrás: casi no se ve, se resuelve con madera y yeso.
-    room.patch((X_MIN, 0, Z_MAX), (width, 0, 0), (0, HEIGHT, 0), nx, 4, "plaster", tint=srgb(0x7a5a3e), normal=(0, 0, -1))
+    # Pared de atrás: la puerta a la calle, el aparador y las fotos del club.
+    room.patch((X_MIN, 0, Z_MAX), (width, 0, 0), (0, HEIGHT, 0), nx * 2, 8, "wallpaper", tint=paper, repeat=(1, 1), normal=(0, 0, -1))
+    door_x0, door_x1 = 1.3, 2.4
+    wainscot(room, back_wall, X_MIN, X_MAX, gaps=((door_x0 - 0.1, door_x1 + 0.1),))
+    door_z = Z_MAX - 0.03
+    door_mid = (door_x0 + door_x1) / 2
+    room.box((door_mid, 1.3, Z_MAX - 0.015), (door_x1 - door_x0 + 0.24, 2.6, 0.03), region="wood_dark", tint=MAHOGANY_DARK)
+    room.box((door_mid, 1.18, door_z), (door_x1 - door_x0, 2.36, 0.03), region="wood", tint=MAHOGANY)
+    for x0, x1 in ((door_x0 + 0.05, door_mid - 0.025), (door_mid + 0.025, door_x1 - 0.05)):
+        mid = (x0 + x1) / 2
+        room.box((mid, 0.46, door_z - 0.018), (x1 - x0 - 0.04, 0.68, 0.012), region="wood_dark", tint=MAHOGANY_DARK)
+        room.quad((x1, 0.9, door_z - 0.018), (x0, 0.9, door_z - 0.018), (x0, 2.24, door_z - 0.018), (x1, 2.24, door_z - 0.018), region="door_glass", glow=True, tint=(0.8, 0.8, 0.8))
+    room.quad((door_x1, 2.42, Z_MAX - 0.034), (door_x0, 2.42, Z_MAX - 0.034), (door_x0, 2.82, Z_MAX - 0.034), (door_x1, 2.82, Z_MAX - 0.034), region="stained", glow=True, tint=(0.75, 0.75, 0.75))
+    room.box((door_mid, 2.86, Z_MAX - 0.03), (door_x1 - door_x0 + 0.34, 0.09, 0.06), region="wood_dark", tint=MAHOGANY)
+    for x in (door_mid - 0.07, door_mid + 0.07):
+        limb(room, (x, 1.0, door_z - 0.03), (x, 1.2, door_z - 0.03), 0.008, 0.008, BRASS, segments=4)
+    coat_rack(room, 0.72, 3.68)
+    frame(room, -2.75, -1.75, 1.35, 2.35, ("z", Z_MAX, -1), "photos", thickness=0.04)
+    frame(room, -1.3, -0.15, 1.35, 1.95, ("z", Z_MAX, -1), "portrait", thickness=0.04)
+    frame(room, -1.3, -0.15, 2.05, 2.6, ("z", Z_MAX, -1), "landscape", thickness=0.04)
+    sconce(room, back_wall, -1.52, 2.45)
+    sconce(room, back_wall, 0.75, 2.45)
+
+    # Aparador con la radio, el bandoneón y las copas del club.
+    bx, bz = -0.75, Z_MAX - 0.3
+    room.box((bx, 0.42, bz), (1.5, 0.84, 0.5), region="wood_dark", tint=MAHOGANY_DARK)
+    room.box((bx, 0.86, bz), (1.58, 0.04, 0.56), region="wood", tint=MAHOGANY)
+    for x in (bx - 0.5, bx, bx + 0.5):
+        room.box((x, 0.46, bz - 0.255), (0.42, 0.6, 0.012), region="wood", tint=MAHOGANY)
+        room.lathe((x + 0.14, 0.5, bz - 0.27), [(0.012, 0), (0, 0.01)], segments=5, tint=BRASS)
+    radio(room, bx - 0.45, 0.88, bz)
+    bandoneon(room, bx + 0.15, 0.88, bz)
+    trophy(room, bx + 0.55, 0.88, bz + 0.05)
+    trophy(room, bx + 0.42, 0.88, bz - 0.06)
 
     counter_z = build_back_bar(room)
+    espresso_machine(room, -0.85, 1.04, counter_z - 0.05)
+    for i in range(5):
+        glass(room, 0.55 + i * 0.09, 1.04, counter_z + 0.2, tall=i % 2 == 0)
+    ashtray(room, -1.5, 1.04, counter_z + 0.22)
+    room.box((1.0, 1.095, counter_z + 0.18), (0.11, 0.11, 0.06), tint=srgb(0xb8b0a0))
+    room.box((-1.55, 1.045, counter_z - 0.05), (0.34, 0.012, 0.24), region="plaster", tint=srgb(0xd8cfb8), yaw=0.2)
 
     # Banquetas de barra.
     for x in (-2.4, -1.25, 1.1, 2.3):
         room.lathe((x, 0, counter_z + 0.72), [(0.17, 0), (0.17, 0.02), (0.035, 0.05), (0.035, 0.66), (0.17, 0.68), (0.18, 0.74), (0, 0.76)], segments=8, region="wood_dark", tint=WOOD_RED)
 
     # Mesitas con sillas contra las paredes.
-    for x, z, chairs in ((-2.75, 1.6, (1.5, -1.5)), (2.75, 2.6, (0.2, 3.2)), (-2.8, -0.4, (0.1,))):
-        room.lathe((x, 0, z), [(0.26, 0), (0.08, 0.05), (0.04, 0.1), (0.04, 0.68), (0.4, 0.7), (0.42, 0.74), (0, 0.75)], segments=10, region="wood_dark", tint=WOOD_RED)
-        for angle in chairs:
-            thonet(room, x + math.sin(angle) * 0.62, z + math.cos(angle) * 0.62, angle + math.pi)
-        room.lathe((x + 0.1, 0.75, z), [(0.03, 0), (0.03, 0.2), (0.012, 0.28), (0, 0.28)], segments=6, tint=random.choice(GLASS_COLORS))
+    for x, z, chairs, goods in ((-2.75, 1.6, (1.5, -1.5), 0), (2.75, 2.6, (0.2, 3.2), 1), (-2.8, -0.4, (0.1, 3.0), 2), (2.85, 0.45, (-1.3, 1.9), 0)):
+        cafe_table(room, x, z, chairs, goods)
+        pendant(room, x, z, 2.28)
 
-    # Lámparas: la de la mesa y un globo.
-    room.box((0, 3.2, 0), (0.015, 0.8, 0.015), tint=WOOD_BLACK)
-    room.lathe((0, 2.55, 0), [(0.28, 0), (0.26, 0.04), (0.13, 0.22), (0.05, 0.28), (0, 0.29)], segments=14, tint=srgb(0x2f6b4e))
-    room.lathe((0, 2.55, 0), [(0, 0.0), (0.26, 0.0)], segments=14, tint=srgb(0xffe3a8), glow=True)
-    room.box((0, 3.4, 2.8), (0.015, 0.4, 0.015), tint=WOOD_BLACK)
-    room.lathe((0, 2.92, 2.8), [(0, 0), (0.16, 0.04), (0.22, 0.18), (0.16, 0.32), (0, 0.36)], segments=10, tint=srgb(0xfff0c8), glow=True)
+    # Rincón de los toneles y los cajones de soda.
+    barrel(room, 3.18, 0, 3.5)
+    barrel(room, 2.72, 0, 3.62)
+    barrel(room, 3.22, 0, 3.0)
+    barrel(room, 3.14, 0.68, 3.42, radius=0.22, tall=0.56)
+    soda_crate(room, 2.42, 0, 3.72, TURQUOISE)
+    soda_crate(room, 2.42, 0.18, 3.72, srgb(0x3f7a4e))
+
+    # Rincón de las damajuanas, con un helecho.
+    demijohn(room, -3.3, 3.62, srgb(0x2a4a2a))
+    demijohn(room, -2.86, 3.68, srgb(0x3f6b2e))
+    demijohn(room, -3.32, 3.16, srgb(0x4a3a1a))
+    pot = srgb(0x9a4f2e)
+    room.lathe((-3.28, 0, 2.72), [(0.1, 0), (0.15, 0.24), (0.165, 0.27), (0.14, 0.27), (0, 0.24)], segments=10, tint=pot)
+    fern = srgb(0x2f6b34)
+    # Frondas finas que salen del centro y se arquean hacia afuera.
+    for leaf in range(26):
+        angle = leaf * 2.4
+        reach = 0.2 + 0.05 * (leaf % 5)
+        base = (-3.28, 0.27, 2.72)
+        tip = (base[0] + math.cos(angle) * reach, 0.3 + 0.05 * (leaf % 3), base[2] + math.sin(angle) * reach)
+        mid = (lerp(base[0], tip[0], 0.55), tip[1] + 0.12, lerp(base[2], tip[2], 0.55))
+        across = (-math.sin(angle) * 0.022, 0, math.cos(angle) * 0.022)
+        green = scale(fern, 0.7 + 0.12 * (leaf % 4))
+        low = tuple(base[k] + across[k] * 0.4 for k in range(3))
+        low2 = tuple(base[k] - across[k] * 0.4 for k in range(3))
+        wide = tuple(mid[k] + across[k] for k in range(3))
+        wide2 = tuple(mid[k] - across[k] for k in range(3))
+        room.face((low, low2, wide2, wide), "white", ((0, 1), (1, 1), (1, 0), (0, 0)), green, normal=(0, 1, 0))
+        room.face((wide, wide2, tip), "white", ((0, 1), (1, 1), (0.5, 0)), green, normal=(0, 1, 0))
+
+    # Banderines de un lado al otro, por encima de las cabezas.
+    bunting(room, X_MIN, X_MAX, -0.55, 3.28)
+    bunting(room, X_MIN, X_MAX, 2.25, 3.28, colors=[(srgb(0xb3261e), None), (srgb(0xf4e6c4), None), (srgb(0xe3a93c), None)])
+
+    # Lámpara de la mesa, con cadena y foco, y un globo junto a la puerta.
+    limb(room, (0, HEIGHT - 0.06, 0), (0, 2.82, 0), 0.008, 0.008, BRASS, segments=4)
+    room.lathe((0, 2.55, 0), [(0.28, 0), (0.26, 0.04), (0.13, 0.22), (0.05, 0.28), (0, 0.29)], segments=18, tint=srgb(0x2f6b4e))
+    room.lathe((0, 2.55, 0), [(0.28, 0), (0.285, 0.012), (0.27, 0.03)], segments=18, tint=BRASS)
+    room.lathe((0, 2.55, 0), [(0, 0.02), (0.26, 0.02)], segments=18, tint=srgb(0xffe3a8), glow=True)
+    room.lathe((0, 2.5, 0), [(0, 0.0), (0.05, 0.015), (0.06, 0.05), (0.03, 0.08), (0, 0.08)], segments=10, tint=(1.0, 0.96, 0.82), glow=True)
+    limb(room, (0, HEIGHT - 0.02, 2.8), (0, 3.28, 2.8), 0.008, 0.008, BRASS, segments=4)
+    room.lathe((0, 2.92, 2.8), [(0, 0), (0.16, 0.04), (0.22, 0.18), (0.16, 0.32), (0, 0.36)], segments=12, tint=srgb(0xfff0c8), glow=True)
 
     # Ventilador de techo.
     fx, fz = 1.6, -0.2
@@ -619,7 +946,7 @@ def build_table():
     # Radio 1 en planta: el juego la escala según los jugadores. La tapa queda en y = 0.
     table = Part("mesa")
     top_tint = (1.0, 0.94, 0.86)
-    segments = 40
+    segments = 96
     for ring in range(4):
         r0, r1 = ring * 0.235, (ring + 1) * 0.235
         for i in range(segments):

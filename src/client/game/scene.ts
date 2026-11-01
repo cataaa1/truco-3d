@@ -6,6 +6,8 @@ import {
   CylinderGeometry,
   DirectionalLight,
   DoubleSide,
+  AdditiveBlending,
+  FogExp2,
   HemisphereLight,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -20,6 +22,8 @@ import {
   Quaternion,
   Scene,
   ShaderMaterial,
+  Sprite,
+  SpriteMaterial,
   SphereGeometry,
   SRGBColorSpace,
   Texture,
@@ -55,6 +59,20 @@ const HELD_SPACING = 0.09;
 // La cabeza gira desde el cuello y baja hasta cierto punto: los ojos siguen más abajo que la nariz.
 const NECK_LENGTH = 0.13;
 const MAX_NOD = 0.55;
+// Luces del boliche que llevan halo: (x, y, z, tamaño). Coinciden con las lámparas de boliche.py.
+const HALOS: readonly (readonly [number, number, number, number])[] = [
+  [0, 2.5, 0, 1.5],
+  [0, 3.08, 2.8, 1.1],
+  [3.46, 2.15, -2.0, 0.8],
+  [3.46, 2.15, 0.95, 0.8],
+  [-1.52, 2.55, 3.82, 0.7],
+  [0.75, 2.55, 3.82, 0.7],
+  [-2.75, 2.26, 1.6, 0.7],
+  [2.75, 2.26, 2.6, 0.7],
+  [-2.8, 2.26, -0.4, 0.7],
+  [2.85, 2.26, 0.45, 0.7],
+];
+
 const HEAD_SHAPE = { x: 0.165, y: 0.175, z: 0.165 };
 const TAG_HEIGHT = 0.36;
 
@@ -324,9 +342,31 @@ export class TableScene {
     }
     room.frustumCulled = false;
     table.frustumCulled = false;
-    this.scene.add(room, tableHolder, chairs);
+    this.scene.add(room, tableHolder, chairs, ...this.buildHalos());
+    // Un poco de aire cargado: lo lejano se aleja de verdad sin sumar geometría.
+    this.scene.fog = new FogExp2(0x2a1a10, 0.075);
     this.renderer.setClearColor(0x14100c);
     this.invalidate();
+  }
+
+  private buildHalos(): Sprite[] {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext('2d')!;
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, 'rgba(255,214,150,.42)');
+    gradient.addColorStop(0.35, 'rgba(255,190,110,.13)');
+    gradient.addColorStop(1, 'rgba(255,170,90,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    const map = new CanvasTexture(canvas);
+    const material = new SpriteMaterial({ map, blending: AdditiveBlending, depthWrite: false, fog: false, transparent: true });
+    return HALOS.map(([x, y, z, size]) => {
+      const halo = new Sprite(material);
+      halo.position.set(x, y, z);
+      halo.scale.set(size, size, 1);
+      return halo;
+    });
   }
 
   /** Reemplaza los muñecos provisorios. Mi cuerpo también se dibuja: al mirar abajo veo mis brazos. */

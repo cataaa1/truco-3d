@@ -38,6 +38,6 @@ describe.each([2, 4, 6])('cartas jugadas en mesa de %i', (players) => {
   });
 
   it('las mías quedan de mi lado de la mesa', () => {
-    for (const round of [0, 1, 2]) expect(playedCard(players, 0, round).z).toBeGreaterThan(0.3);
+    for (const round of [0, 1, 2]) expect(playedCard(players, 0, round).z).toBeGreaterThan(0.25);
   });
 });

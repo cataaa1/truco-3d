@@ -478,6 +478,182 @@ function drawPoster(ctx: Ctx, w: number, h: number): void {
   lettering(ctx, 'a 30', w / 2, 316, 44, black, gold, black, 180);
 }
 
+/** Chapa estampada del techo: una cuadrícula con una flor en relieve. */
+function drawTin(ctx: Ctx, w: number): void {
+  ctx.fillStyle = '#e6dcc4';
+  ctx.fillRect(0, 0, w, w);
+  const c = w / 2;
+  const emboss = (light: string, dark: string, draw: () => void) => {
+    ctx.save();
+    ctx.translate(-2, -2);
+    ctx.strokeStyle = light;
+    draw();
+    ctx.translate(4, 4);
+    ctx.strokeStyle = dark;
+    draw();
+    ctx.restore();
+  };
+  ctx.lineWidth = 6;
+  emboss('#fff8e6', '#a8987a', () => {
+    ctx.strokeRect(14, 14, w - 28, w - 28);
+    ctx.strokeRect(38, 38, w - 76, w - 76);
+    for (let i = 0; i < 8; i++) {
+      const a = (i * Math.PI) / 4;
+      ctx.beginPath();
+      ctx.ellipse(c + Math.cos(a) * 44, c + Math.sin(a) * 44, 34, 15, a, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(c, c, 15, 0, Math.PI * 2);
+    ctx.stroke();
+    for (const [x, y] of [[26, 26], [w - 26, 26], [26, w - 26], [w - 26, w - 26]] as const) {
+      ctx.beginPath();
+      ctx.arc(x, y, 7, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  });
+}
+
+/** Empapelado antiguo con un adamascado de dos tonos. */
+function drawWallpaper(ctx: Ctx, w: number): void {
+  ctx.fillStyle = '#7d3a2c';
+  ctx.fillRect(0, 0, w, w);
+  ctx.fillStyle = '#92493a';
+  const motif = (x: number, y: number, size: number) => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(size, size);
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(0, -1);
+      ctx.bezierCurveTo(side * 0.7, -0.6, side * 0.25, -0.25, side * 0.62, 0);
+      ctx.bezierCurveTo(side * 0.25, 0.25, side * 0.7, 0.6, 0, 1);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  };
+  for (const [x, y] of [[64, 64], [192, 192], [-64, 192], [320, 64], [64, 320], [192, -64]] as const) motif(x, y, 54);
+  ctx.fillStyle = '#7d3a2c';
+  for (const [x, y] of [[64, 64], [192, 192]] as const) motif(x, y, 22);
+  ctx.fillStyle = '#a05a48';
+  for (const [x, y] of [[192, 64], [64, 192]] as const) {
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawChalkboard(ctx: Ctx, w: number, h: number): void {
+  ctx.fillStyle = '#23302a';
+  ctx.fillRect(0, 0, w, h);
+  const random = seeded(11);
+  for (let i = 0; i < 90; i++) {
+    ctx.strokeStyle = `rgba(230,235,225,${random() * 0.05})`;
+    ctx.lineWidth = 10 + random() * 16;
+    ctx.beginPath();
+    const x = random() * w;
+    const y = random() * h;
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 60 + random() * 90, y + random() * 16 - 8);
+    ctx.stroke();
+  }
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#f0ead6';
+  ctx.font = '400 48px Rye, Georgia, serif';
+  ctx.fillText('HOY', w / 2, 52);
+  ctx.fillStyle = '#e8e2cc';
+  ctx.font = 'italic 30px Georgia, serif';
+  const lines = ['Vermú con soda', 'Ginebra de la casa', 'Café en jarrito', 'Picada para la mesa'];
+  lines.forEach((line, i) => ctx.fillText(line, w / 2, 100 + i * 39));
+  ctx.strokeStyle = '#d9c98f';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(10, 10, w - 20, h - 20);
+}
+
+/** Vidrio de la puerta: la calle de noche detrás del nombre pintado. */
+function drawDoorGlass(ctx: Ctx, w: number, h: number): void {
+  const gradient = ctx.createLinearGradient(0, 0, 0, h);
+  gradient.addColorStop(0, '#16263a');
+  gradient.addColorStop(0.7, '#2c3a4a');
+  gradient.addColorStop(1, '#4a4238');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, w, h);
+  const glow = ctx.createRadialGradient(w * 0.72, h * 0.32, 4, w * 0.72, h * 0.32, 90);
+  glow.addColorStop(0, 'rgba(255,220,150,.95)');
+  glow.addColorStop(1, 'rgba(255,220,150,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#10161e';
+  ctx.fillRect(w * 0.71, h * 0.34, 5, h * 0.66);
+  ctx.fillRect(0, h * 0.62, w * 0.45, h * 0.38);
+  ctx.fillStyle = '#d9b24a';
+  for (const [x, y] of [[18, 0.68], [52, 0.68], [84, 0.68], [18, 0.8], [52, 0.8]] as const) ctx.fillRect(x, h * y, 18, 26);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#e3a93c';
+  ctx.font = '400 42px Rye, Georgia, serif';
+  ctx.fillText('BAR', w / 2, 64);
+}
+
+/** Fotos viejas de equipos y familias, sin nadie reconocible. */
+function drawPhotos(ctx: Ctx, w: number): void {
+  const cell = w / 3;
+  const random = seeded(23);
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 3; col++) {
+      ctx.save();
+      ctx.translate(col * cell, row * cell);
+      ctx.fillStyle = '#e7dcc0';
+      ctx.fillRect(0, 0, cell, cell);
+      ctx.fillStyle = `rgb(${150 + random() * 40},${122 + random() * 30},${86 + random() * 20})`;
+      ctx.fillRect(7, 7, cell - 14, cell - 14);
+      const people = 1 + Math.floor(random() * 5);
+      ctx.fillStyle = '#3a2a1c';
+      for (let i = 0; i < people; i++) {
+        const x = 7 + ((i + 0.5) * (cell - 14)) / people;
+        const tall = cell * (0.3 + random() * 0.1);
+        ctx.beginPath();
+        ctx.arc(x, cell - 9 - tall, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillRect(x - 6, cell - 7 - tall, 12, tall);
+      }
+      ctx.restore();
+    }
+  }
+}
+
+function drawCalendar(ctx: Ctx, w: number, h: number): void {
+  ctx.fillStyle = '#f0e6cc';
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = FILETE.red;
+  ctx.fillRect(0, 0, w, 40);
+  ctx.fillStyle = '#f0e6cc';
+  ctx.textAlign = 'center';
+  ctx.font = '400 26px Rye, Georgia, serif';
+  ctx.fillText('ALMANAQUE', w / 2, 29);
+  ctx.fillStyle = '#3a2a1c';
+  ctx.font = '700 18px Georgia, serif';
+  for (let i = 0; i < 28; i++) ctx.fillText(String(i + 1), 24 + (i % 7) * 34, 62 + Math.floor(i / 7) * 21);
+}
+
+/** Dial de la radio a válvulas, encendido. */
+function drawDial(ctx: Ctx, w: number, h: number): void {
+  ctx.fillStyle = '#d9a648';
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#3a2412';
+  ctx.font = '700 16px Georgia, serif';
+  ctx.textAlign = 'center';
+  for (let i = 0; i < 7; i++) {
+    const x = 26 + i * 34;
+    ctx.fillRect(x, 54, 2, 22);
+    ctx.fillText(String(55 + i * 15), x, 46);
+  }
+  ctx.fillStyle = FILETE.red;
+  ctx.fillRect(112, 28, 4, 80);
+  ctx.fillStyle = '#3a2412';
+  ctx.fillText('ONDA LARGA', w / 2, 104);
+}
+
 /** Texturas del boliche. Se generan en el navegador: no se descargan. */
 export function buildRoomAtlas(): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
@@ -517,5 +693,12 @@ export function buildRoomAtlas(): HTMLCanvasElement {
   within(ctx, 'glass_bar', (w, h) => drawGlass(ctx, w, h, 'BAR', FILETE.red));
   within(ctx, 'glass_cafe', (w, h) => drawGlass(ctx, w, h, 'CAFÉ', '#1f5f86'));
   within(ctx, 'poster', (w, h) => drawPoster(ctx, w, h));
+  within(ctx, 'tin', (w) => drawTin(ctx, w));
+  within(ctx, 'wallpaper', (w) => drawWallpaper(ctx, w));
+  within(ctx, 'chalkboard', (w, h) => drawChalkboard(ctx, w, h));
+  within(ctx, 'door_glass', (w, h) => drawDoorGlass(ctx, w, h));
+  within(ctx, 'photos', (w) => drawPhotos(ctx, w));
+  within(ctx, 'calendar', (w, h) => drawCalendar(ctx, w, h));
+  within(ctx, 'dial', (w, h) => drawDial(ctx, w, h));
   return canvas;
 }

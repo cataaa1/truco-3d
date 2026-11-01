@@ -3,7 +3,7 @@ export const PLAYED_W = 0.15;
 export const PLAYED_H = 0.234;
 const PLAYED_GAP = 0.03;
 // Mi fila arranca justo delante de las cartas que tengo en la mano, para que no las tapen.
-const MY_ROW_FROM_SEAT = 0.9;
+const MY_ROW_FROM_SEAT = 0.98;
 const OTHERS_ROW = { 2: 0.5, 4: 0.5, 6: 0.66 } as Record<number, number>;
 const CARD_Y = 0.003;
 
