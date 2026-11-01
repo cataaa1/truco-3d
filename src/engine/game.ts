@@ -1,4 +1,4 @@
-import { envidoPoints, hasFlor, shuffledDeck, strength, type CardId } from './cards';
+import { envidoCards, envidoPoints, hasFlor, shuffledDeck, strength, type CardId } from './cards';
 
 export type Team = 0 | 1;
 export type PlayerCount = 2 | 4 | 6;
@@ -19,7 +19,9 @@ export type Action =
   | { t: 'mazo' }
   | { t: 'flor' }
   | { t: 'contraflor' }
-  | { t: 'contraflor_resto' };
+  | { t: 'contraflor_resto' }
+  | { t: 'mostrar' }
+  | { t: 'nomostrar' };
 
 export type GameEvent =
   | { e: 'deal'; dealer: number; mano: number }
@@ -28,6 +30,8 @@ export type GameEvent =
   | { e: 'answer'; seat: number; quiero: boolean; what: 'truco' | 'envido' | 'flor' }
   | { e: 'mazo'; seat: number }
   | { e: 'envido'; team: Team; seat: number; tantos: number; points: number }
+  | { e: 'mustShow'; seat: number }
+  | { e: 'show'; seat: number; shown: boolean; team: Team; points: number; cards: CardId[] }
   | { e: 'flor'; team: Team; points: number }
   | { e: 'round'; winner: Team | null }
   | { e: 'hand'; team: Team; points: number; reason: 'rounds' | 'rejected' | 'mazo' }
@@ -57,13 +61,18 @@ export interface HandState {
   florSung: boolean[];
   florPending: { stage: FlorStage; by: Team; seat: number } | null;
   florDone: boolean;
+  /** Envido ganado que todavía no suma: hay que mostrar las cartas con las que se cantó. */
+  envidoClaim: { seat: number; team: Team; points: number; tantos: number } | null;
+  /** Resultado de la mano, a la espera de que se muestre el envido. */
+  handResult: { team: Team; points: number; reason: 'rounds' | 'rejected' | 'mazo' } | null;
+  shown: Play[];
 }
 
 export interface GameState {
   config: Config;
   scores: [number, number];
   dealer: number;
-  phase: 'playing' | 'handOver' | 'gameOver';
+  phase: 'playing' | 'showing' | 'handOver' | 'gameOver';
   winner: Team | null;
   hand: HandState;
   events: GameEvent[];
@@ -110,6 +119,9 @@ function deal(players: number, dealer: number, random: () => number): HandState 
     florSung: Array<boolean>(players).fill(false),
     florPending: null,
     florDone: false,
+    envidoClaim: null,
+    handResult: null,
+    shown: [],
   };
 }
 
@@ -153,7 +165,8 @@ export function canOpenEnvido(state: GameState, seat: number): boolean {
   if (hasPlayedFirst(hand, seat)) return false;
   // "El envido está primero": se puede cantar en respuesta al truco.
   if (hand.trucoPending) return hand.trucoPending.level === 1 && hand.trucoPending.by !== teamOf(seat);
-  return true;
+  // De a 2 solo en el turno propio; de a 4 o 6 alcanza con ser uno de los dos últimos.
+  return state.config.players > 2 || hand.turn === seat;
 }
 
 function canSingFlor(state: GameState, seat: number): boolean {
@@ -165,6 +178,9 @@ function canSingFlor(state: GameState, seat: number): boolean {
 }
 
 export function legalActions(state: GameState, seat: number): Action[] {
+  if (state.phase === 'showing') {
+    return state.hand.envidoClaim?.seat === seat ? [{ t: 'mostrar' }, { t: 'nomostrar' }] : [];
+  }
   if (state.phase !== 'playing') return [];
   const { hand } = state;
   if (hand.folded[seat]) return [];
@@ -221,6 +237,8 @@ export function applyAction(state: GameState, seat: number, action: Action): boo
     case 'flor': singFlor(state, seat); break;
     case 'contraflor': raiseFlor(state, seat, 'contra'); break;
     case 'contraflor_resto': raiseFlor(state, seat, 'resto'); break;
+    case 'mostrar': settleEnvido(state, true); break;
+    case 'nomostrar': settleEnvido(state, false); break;
   }
   return true;
 }
@@ -237,7 +255,51 @@ function addPoints(state: GameState, team: Team, points: number): boolean {
   return false;
 }
 
+/** Cartas del envido que todavía no se vieron sobre la mesa. */
+function unseenEnvidoCards(hand: HandState, seat: number): CardId[] {
+  const played = hand.rounds.flat().filter((play) => play.seat === seat).map((play) => play.card);
+  return envidoCards(hand.dealt[seat]!).filter((card) => !played.includes(card));
+}
+
+function askToShow(state: GameState, seat: number): void {
+  state.phase = 'showing';
+  state.events.push({ e: 'mustShow', seat });
+}
+
+/** Quien ganó el envido muestra sus cartas y suma; si no las muestra, los puntos son del contrario. */
+function settleEnvido(state: GameState, shown: boolean): void {
+  const { hand } = state;
+  const claim = hand.envidoClaim!;
+  hand.envidoClaim = null;
+  const team = shown ? claim.team : otherTeam(claim.team);
+  const cards = shown ? envidoCards(hand.dealt[claim.seat]!) : [];
+  if (shown) for (const card of unseenEnvidoCards(hand, claim.seat)) hand.shown.push({ seat: claim.seat, card });
+  state.events.push({ e: 'show', seat: claim.seat, shown, team, points: claim.points, cards });
+  state.phase = 'playing';
+  if (addPoints(state, team, claim.points)) return;
+  const result = hand.handResult;
+  if (result) {
+    hand.handResult = null;
+    finishHand(state, result.team, result.points, result.reason);
+  }
+}
+
 function endHand(state: GameState, team: Team, points: number, reason: 'rounds' | 'rejected' | 'mazo'): void {
+  const { hand } = state;
+  // El envido se cuenta antes que la mano, y solo si se muestran las cartas.
+  if (hand.envidoClaim) {
+    hand.handResult = { team, points, reason };
+    if (unseenEnvidoCards(hand, hand.envidoClaim.seat).length > 0) {
+      askToShow(state, hand.envidoClaim.seat);
+      return;
+    }
+    settleEnvido(state, true);
+    return;
+  }
+  finishHand(state, team, points, reason);
+}
+
+function finishHand(state: GameState, team: Team, points: number, reason: 'rounds' | 'rejected' | 'mazo'): void {
   state.events.push({ e: 'hand', team, points, reason });
   if (!addPoints(state, team, points)) state.phase = 'handOver';
 }
@@ -396,7 +458,9 @@ function answerEnvido(state: GameState, quiero: boolean): void {
   const team = teamOf(best.seat);
   const points = envidoAccepted(calls, faltaPoints(state, team));
   state.events.push({ e: 'envido', team, seat: best.seat, tantos: best.tantos, points });
-  addPoints(state, team, points);
+  hand.envidoClaim = { seat: best.seat, team, points, tantos: best.tantos };
+  // Si con esos puntos gana la partida no hace falta seguir jugando la mano.
+  if (state.scores[team] + points >= state.config.target) askToShow(state, best.seat);
 }
 
 function singFlor(state: GameState, seat: number): void {
@@ -469,6 +533,7 @@ function fold(state: GameState, seat: number): void {
 
 /** Lo que hace el servidor cuando se vence el tiempo de un turno o un canto. */
 export function timeoutAction(state: GameState): { seat: number; action: Action } | null {
+  if (state.phase === 'showing') return { seat: state.hand.envidoClaim!.seat, action: { t: 'nomostrar' } };
   if (state.phase !== 'playing') return null;
   const { hand, config } = state;
   const responding = respondingTeam(hand);
@@ -502,6 +567,10 @@ export interface PlayerView {
   responding: Team | null;
   pendingLabel: string | null;
   legal: Action[];
+  /** Asiento que tiene que mostrar el envido, si la partida está esperando eso. */
+  showing: number | null;
+  /** Cartas mostradas por el envido, a la vista de todos. */
+  shown: Play[];
 }
 
 function pendingLabel(hand: HandState): string | null {
@@ -536,5 +605,7 @@ export function viewFor(state: GameState, seat: number): PlayerView {
     responding: respondingTeam(hand),
     pendingLabel: pendingLabel(hand),
     legal: legalActions(state, seat),
+    showing: state.phase === 'showing' ? hand.envidoClaim!.seat : null,
+    shown: hand.shown,
   };
 }

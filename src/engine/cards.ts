@@ -45,6 +45,17 @@ export function envidoPoints(cards: readonly CardId[]): number {
   return best;
 }
 
+/** Las cartas con las que se cantan esos tantos: el par del mismo palo o, si no hay, la más alta. */
+export function envidoCards(cards: readonly CardId[]): CardId[] {
+  const points = envidoPoints(cards);
+  for (let a = 0; a < cards.length; a++) {
+    for (let b = a + 1; b < cards.length; b++) {
+      if (envidoPoints([cards[a]!, cards[b]!]) === points && cardSuit(cards[a]!) === cardSuit(cards[b]!)) return [cards[a]!, cards[b]!];
+    }
+  }
+  return [cards.find((card) => envidoPoints([card]) === points)!];
+}
+
 export const hasFlor = (cards: readonly CardId[]): boolean =>
   cards.length === 3 && cards.every((c) => cardSuit(c) === cardSuit(cards[0]!));
 

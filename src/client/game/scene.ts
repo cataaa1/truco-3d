@@ -580,9 +580,19 @@ export class TableScene {
       }
     });
 
+    // Las cartas mostradas por el envido van a la mesa, en los lugares que quedan libres de esa fila.
+    for (const { seat, card } of view.shown) {
+      const key = `t${card}`;
+      seen.add(key);
+      const index = view.rounds.flat().filter((play) => play.seat === seat).length + view.shown.filter((play) => play.seat === seat).findIndex((play) => play.card === card);
+      const { scale } = this.tablePlacement(seat, index, place);
+      this.handPlacement(seat, 1, 3, from);
+      this.putSprite(key, card, place, PLAYED_W * scale, PLAYED_H * scale, from);
+    }
+
     for (let seat = 0; seat < this.players; seat++) {
       if (seat === this.me) continue;
-      const count = view.cardCounts[seat]!;
+      const count = view.cardCounts[seat]! - view.shown.filter((play) => play.seat === seat).length;
       for (let i = 0; i < count; i++) {
         const key = `o${seat}:${i}:${count}`;
         seen.add(key);
@@ -591,10 +601,11 @@ export class TableScene {
       }
     }
 
-    view.myCards.forEach((card, i) => {
+    const held = view.myCards.filter((card) => !view.shown.some((play) => play.card === card));
+    held.forEach((card, i) => {
       const key = `h${card}`;
       seen.add(key);
-      this.handPlacement(this.me, i, view.myCards.length, place, this.hovered === i ? 0.022 : 0);
+      this.handPlacement(this.me, i, held.length, place, this.hovered === i ? 0.022 : 0);
       this.putSprite(key, card, place, HELD_W, HELD_H);
     });
 

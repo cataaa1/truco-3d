@@ -1,3 +1,4 @@
+import { cardName } from '../../engine/cards';
 import { teamOf, type Action, type GameEvent, type PlayerView } from '../../engine/game';
 import { PHRASES, SENA_MS, SENAS, type RoomInfo, type ServerMessage } from '../../shared/protocol';
 import type { Connection } from '../net';
@@ -65,6 +66,8 @@ const ACTION_KEYS: Record<string, string> = {
   noquiero: 'KeyN',
   mazo: 'KeyM',
   flor: 'KeyL',
+  mostrar: 'KeyY',
+  nomostrar: 'KeyN',
 };
 
 const SENS = 0.0022;
@@ -200,11 +203,22 @@ export function mountGame(
         break;
       case 'envido':
         if (event.tantos >= 0) {
-          toast(`${nameOf(event.seat)} tiene ${event.tantos}: ${event.points} para ${teamLabel(event.team)}`, 3600);
+          toast(`${nameOf(event.seat)} gana el envido con ${event.tantos}. Al final tiene que mostrar.`, 3600);
           voices.play(event.seat, String(event.tantos));
           const rival = (event.seat + 1) % room.players;
           setTimeout(() => voices.play(rival, 'son_buenas'), 800);
         } else toast(`Envido rechazado: ${event.points} para ${teamLabel(event.team)}`);
+        break;
+      case 'mustShow':
+        toast(event.seat === me ? 'Ganaste el envido: mostrá tus cartas o los puntos son de ellos' : `${nameOf(event.seat)} tiene que mostrar sus cartas`, 3600);
+        break;
+      case 'show':
+        toast(
+          event.shown
+            ? `${nameOf(event.seat)} mostró ${event.cards.map(cardName).join(' y ')}: ${event.points} para ${teamLabel(event.team)}`
+            : `${nameOf(event.seat)} no mostró: ${event.points} para ${teamLabel(event.team)}`,
+          4200,
+        );
         break;
       case 'flor':
         toast(`Flor: ${event.points} para ${teamLabel(event.team)}`);
@@ -244,7 +258,8 @@ export function mountGame(
       if (key !== code) continue;
       const isEnvido = name === 'envido' || name === 'real' || name === 'falta';
       const action = isEnvido ? legal('envido', name) : legal(name as Action['t']);
-      if (action) send(action);
+      if (!action) continue;
+      send(action);
       return true;
     }
     return false;
@@ -447,6 +462,7 @@ export function mountGame(
   function statusText(v: PlayerView): string {
     if (v.phase === 'gameOver') return v.winner === teamOf(me) ? '¡Ganamos!' : 'Perdimos';
     if (v.phase === 'handOver') return 'Mano terminada';
+    if (v.showing !== null) return v.showing === me ? 'Mostrá las cartas del envido' : `Esperando que ${nameOf(v.showing)} muestre el envido`;
     if (v.responding !== null && v.pendingLabel) {
       const canto = CANTO_TEXT[v.pendingLabel] ?? v.pendingLabel;
       return v.responding === teamOf(me) ? `Te cantaron ${canto} ¿Qué respondés?` : `Cantaron ${canto} Esperando respuesta`;
@@ -466,6 +482,10 @@ export function mountGame(
   function renderActions(v: PlayerView): void {
     const box = $('actions');
     box.innerHTML = '';
+    if (v.showing === me) {
+      box.append(button('Mostrar las cartas', 'Y', { t: 'mostrar' }, true), button('No mostrar', 'N', { t: 'nomostrar' }));
+      return;
+    }
     if (v.phase !== 'playing') return;
     const add = (t: Action['t'], label: string, key: string, answer = false) => {
       const action = v.legal.find((a) => a.t === t);

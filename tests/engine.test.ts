@@ -117,8 +117,79 @@ describe('envido', () => {
     const s = rigged(hands);
     applyAction(s, 0, { t: 'envido', call: 'envido' });
     applyAction(s, 1, { t: 'quiero' });
-    expect(s.scores).toEqual([2, 0]);
+    expect(s.hand.envidoClaim?.team).toBe(0);
+    expect(s.scores).toEqual([0, 0]);
     expect(legalActions(s, 0).some((a) => a.t === 'envido')).toBe(false);
+  });
+
+  /** El asiento 0 gana el envido con el 7 y el 6 de oro, y sigue la mano. */
+  function afterEnvido(): GameState {
+    const s = rigged([
+      [c('oro', 7), c('oro', 6), c('copa', 1)],
+      [c('espada', 4), c('basto', 5), c('copa', 2)],
+    ]);
+    applyAction(s, 0, { t: 'envido', call: 'envido' });
+    applyAction(s, 1, { t: 'quiero' });
+    return s;
+  }
+
+  function closeHand(s: GameState, first: number, second: number): void {
+    // El rival se va al mazo: la mano termina sin que el ganador del envido baje sus cartas.
+    applyAction(s, 0, { t: 'play', card: first });
+    applyAction(s, 1, { t: 'play', card: second });
+  }
+
+  it('quien gana el envido suma al mostrar sus cartas', () => {
+    const s = afterEnvido();
+    closeHand(s, c('copa', 1), c('copa', 2));
+    applyAction(s, 1, { t: 'mazo' });
+    expect(s.phase).toBe('showing');
+    expect(s.scores).toEqual([0, 0]);
+    expect(legalActions(s, 1)).toEqual([]);
+    expect(legalActions(s, 0)).toEqual([{ t: 'mostrar' }, { t: 'nomostrar' }]);
+    applyAction(s, 0, { t: 'mostrar' });
+    expect(s.scores).toEqual([3, 0]);
+    expect(s.phase).toBe('handOver');
+    expect(viewFor(s, 1).shown.map((play) => play.card).sort()).toEqual([c('oro', 7), c('oro', 6)].sort());
+  });
+
+  it('si no las muestra, los puntos son del contrario', () => {
+    const s = afterEnvido();
+    closeHand(s, c('copa', 1), c('copa', 2));
+    applyAction(s, 1, { t: 'mazo' });
+    applyAction(s, 0, { t: 'nomostrar' });
+    expect(s.scores).toEqual([1, 2]);
+    expect(viewFor(s, 1).shown).toEqual([]);
+  });
+
+  it('si se le vence el tiempo, cuenta como no mostrar', () => {
+    const s = afterEnvido();
+    closeHand(s, c('copa', 1), c('copa', 2));
+    applyAction(s, 1, { t: 'mazo' });
+    expect(timeoutAction(s)).toEqual({ seat: 0, action: { t: 'nomostrar' } });
+  });
+
+  it('con las cartas ya jugadas no hace falta mostrar nada', () => {
+    const s = afterEnvido();
+    closeHand(s, c('oro', 7), c('espada', 4));
+    applyAction(s, 0, { t: 'play', card: c('oro', 6) });
+    applyAction(s, 1, { t: 'play', card: c('basto', 5) });
+    expect(s.phase).toBe('handOver');
+    expect(s.scores).toEqual([3, 0]);
+    expect(s.events.some((e) => e.e === 'show' && e.shown)).toBe(true);
+  });
+
+  it('el bot siempre muestra', () => {
+    const s = afterEnvido();
+    closeHand(s, c('copa', 1), c('copa', 2));
+    applyAction(s, 1, { t: 'mazo' });
+    expect(botAction(s, 0, () => 0.5)).toEqual({ t: 'mostrar' });
+  });
+
+  it('de a 2, fuera de turno no se puede cantar', () => {
+    const s = rigged(hands);
+    expect(legalActions(s, 1).some((a) => a.t === 'envido')).toBe(false);
+    expect(legalActions(s, 0).some((a) => a.t === 'envido')).toBe(true);
   });
 
   it('falta: si gana el líder gana la partida, si no suma lo que le falta al líder', () => {
@@ -126,6 +197,8 @@ describe('envido', () => {
     leader.scores = [20, 10];
     applyAction(leader, 0, { t: 'envido', call: 'falta' });
     applyAction(leader, 1, { t: 'quiero' });
+    expect(leader.phase).toBe('showing');
+    applyAction(leader, 0, { t: 'mostrar' });
     expect(leader.scores[0]).toBe(30);
     expect(leader.phase).toBe('gameOver');
 
@@ -133,7 +206,7 @@ describe('envido', () => {
     trailing.scores = [10, 20];
     applyAction(trailing, 0, { t: 'envido', call: 'falta' });
     applyAction(trailing, 1, { t: 'quiero' });
-    expect(trailing.scores).toEqual([20, 20]);
+    expect(trailing.hand.envidoClaim?.points).toBe(10);
     expect(trailing.phase).toBe('playing');
   });
 
@@ -411,7 +484,7 @@ describe('simulación', () => {
           continue;
         }
         const before = [...s.scores];
-        const seat = pickActor(s, random);
+        const seat = s.phase === 'showing' ? s.hand.envidoClaim!.seat : pickActor(s, random);
         const action = useBots ? botAction(s, seat, random) : null;
         const legal = legalActions(s, seat);
         const chosen = action ?? legal[Math.floor(random() * legal.length)];

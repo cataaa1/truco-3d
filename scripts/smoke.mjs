@@ -132,7 +132,8 @@ while (solo.view?.phase !== 'gameOver' && Date.now() - started < 300_000) {
   const v = solo.view;
   const play = v.legal.find((x) => x.t === 'play');
   const answer = v.legal.find((x) => x.t === 'quiero');
-  const action = answer ?? play;
+  const show = v.legal.find((x) => x.t === 'mostrar');
+  const action = show ?? answer ?? play;
   if (action && v.phase === 'playing') {
     solo.send({ t: 'act', a: action });
     moves++;
@@ -176,7 +177,7 @@ for (let attempt = 0; attempt < 12 && !sang; attempt++) {
     const end = Date.now() + 14000;
     while (Date.now() < end && !sang && me.view.phase === 'playing') {
       sang = me.inbox.some((m) => m.t === 'game' && m.events.some((e) => e.e === 'canto' && e.seat === partner && e.canto === 'envido'));
-      const play = me.view.legal.find((a) => a.t === 'quiero') ?? me.view.legal.find((a) => a.t === 'play');
+      const play = me.view.legal.find((a) => a.t === 'mostrar') ?? me.view.legal.find((a) => a.t === 'quiero') ?? me.view.legal.find((a) => a.t === 'play');
       if (play && !sang) me.send({ t: 'act', a: play });
       await sleep(250);
     }

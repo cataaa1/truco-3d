@@ -83,6 +83,7 @@ export function botAction(
   const envidoCall = (call: 'envido' | 'real' | 'falta'): Action | undefined =>
     legal.find((a) => a.t === 'envido' && a.call === call);
 
+  if (has('mostrar')) return { t: 'mostrar' };
   if (has('flor')) return { t: 'flor' };
 
   if (hand.florPending) return random() < 0.6 ? { t: 'quiero' } : { t: 'noquiero' };

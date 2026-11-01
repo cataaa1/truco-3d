@@ -622,20 +622,6 @@ def sconce(part, wall, a, y):
     part.lathe(center, [(0, 0.0), (0.075, 0.04), (0.085, 0.12), (0.04, 0.17), (0, 0.17)], segments=8, tint=srgb(0xfff0c0), glow=True)
 
 
-def curtain(part, x, z0, z1, y0, y1):
-    """Visillo plegado a media ventana, con su barra de bronce."""
-    folds = 22
-    side = 1 if x < 0 else -1
-    lace = srgb(0xfff6e2)
-    for i in range(folds):
-        a0, a1 = lerp(z0, z1, i / folds), lerp(z0, z1, (i + 1) / folds)
-        tint = scale(lace, 0.84 if i % 2 else 1.0)
-        depth = 0.03 if i % 2 else 0.055
-        depth1 = 0.055 if i % 2 else 0.03
-        part.face(((x + side * depth, y0, a0), (x + side * depth1, y0, a1), (x + side * depth1, y1, a1), (x + side * depth, y1, a0)), "white", ((0, 1), (1, 1), (1, 0), (0, 0)), tint, glow=True)
-    limb(part, (x + side * 0.05, y1 + 0.01, z0 - 0.03), (x + side * 0.05, y1 + 0.01, z1 + 0.03), 0.009, 0.009, BRASS, segments=5)
-
-
 def ashtray(part, x, y, z):
     part.lathe((x, y, z), [(0.045, 0), (0.05, 0.016), (0.036, 0.016), (0.03, 0.006), (0, 0.006)], segments=8, tint=srgb(0xb9b2a4))
 
@@ -825,7 +811,7 @@ def build_room():
         room.lathe((X_MAX - 0.13, 2.05, z), [(0, 0.0), (0.09, 0.05), (0.1, 0.15), (0.05, 0.2), (0, 0.2)], segments=8, tint=srgb(0xfff0c0), glow=True)
         room.box((X_MAX - 0.07, 2.02, z), (0.13, 0.03, 0.03), tint=BRASS)
 
-    # Pared izquierda: empapelado, zócalo tallado y ventanales a la calle con visillos.
+    # Pared izquierda: empapelado, zócalo tallado y ventanales a la calle.
     room.patch((X_MIN, 0, Z_MIN), (0, 0, depth), (0, HEIGHT, 0), nz * 2, 8, "wallpaper", tint=paper, repeat=(1, 1), normal=(1, 0, 0))
     wainscot(room, left, -2.15, Z_MAX)
     for z0, z1, region in ((-2.5, -0.9, "glass_bar"), (-0.75, 0.85, "glass_cafe"), (1.0, 2.6, "stained")):
@@ -833,7 +819,6 @@ def build_room():
         wall_box(room, left, (z0 + z1) / 2, 1.04, z1 - z0 + 0.14, 0.04, 0.11, "wood", MAHOGANY)
         wall_box(room, left, (z0 + z1) / 2, 2.8, z1 - z0 + 0.1, 0.09, 0.07, "wood_dark", MAHOGANY_DARK)
         wall_box(room, left, (z0 + z1) / 2, 1.9, 0.035, 1.7, 0.035, "wood_dark", MAHOGANY_DARK, off=0.02)
-        curtain(room, X_MIN + 0.03, z0 + 0.08, z1 - 0.08, 1.08, 1.72)
 
     # Pared de atrás: la puerta a la calle, el aparador y las fotos del club.
     room.patch((X_MIN, 0, Z_MAX), (width, 0, 0), (0, HEIGHT, 0), nx * 2, 8, "wallpaper", tint=paper, repeat=(1, 1), normal=(0, 0, -1))

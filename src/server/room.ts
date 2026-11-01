@@ -36,6 +36,8 @@ const BOT_MAX_MS = 1_900;
 const BOT_SENA_MIN_MS = 1_500;
 const BOT_SENA_MAX_MS = 5_000;
 const NEXT_HAND_MS = 3_500;
+const SHOW_MS = 15_000;
+const SHOWN_HAND_MS = 6_000;
 const AWAY_MS = 15_000;
 const LOBBY_SEAT_MS = 15_000;
 const QUICK_FILL_MS = 20_000;
@@ -266,7 +268,7 @@ export class Room extends DurableObject<Env> {
     this.passHost();
     const now = Date.now();
     const game = data.game;
-    if (game?.phase === 'playing' && data.botDue === null && this.botToAct() !== null) data.botDue = now + BOT_MIN_MS;
+    if ((game?.phase === 'playing' || game?.phase === 'showing') && data.botDue === null && this.botToAct() !== null) data.botDue = now + BOT_MIN_MS;
     if (this.botSenaAt === null) this.scheduleBotSenas(now);
     this.broadcastRoom();
     this.moveBotHeads();
@@ -417,6 +419,10 @@ export class Room extends DurableObject<Env> {
   /** Asiento controlado por el bot que debe actuar ahora, si lo hay. */
   private botToAct(): number | null {
     const { game, players } = this.data!;
+    if (game?.phase === 'showing') {
+      const claimant = game.hand.envidoClaim!.seat;
+      return this.isBotControlled(claimant) ? claimant : null;
+    }
     if (!game || game.phase !== 'playing') return null;
     const responding = respondingTeam(game.hand);
     if (responding !== null) {
@@ -442,8 +448,9 @@ export class Room extends DurableObject<Env> {
     }
     if (dealt || this.botSenaAt === null || game.phase !== 'playing') this.scheduleBotSenas(now);
 
-    data.deadline = game.phase === 'playing' ? now + TURN_MS : null;
-    data.nextHandDue = game.phase === 'handOver' ? now + NEXT_HAND_MS : null;
+    data.deadline = game.phase === 'playing' ? now + TURN_MS : game.phase === 'showing' ? now + SHOW_MS : null;
+    const showedCards = events.some((event) => event.e === 'show' && event.shown);
+    data.nextHandDue = game.phase === 'handOver' ? now + (showedCards ? SHOWN_HAND_MS : NEXT_HAND_MS) : null;
     data.botDue =
       this.botToAct() !== null ? now + BOT_MIN_MS + Math.random() * (BOT_MAX_MS - BOT_MIN_MS) : null;
     if (game.phase === 'gameOver' && data.status !== 'finished') {
@@ -520,7 +527,8 @@ export class Room extends DurableObject<Env> {
         await this.afterGameChange();
         return;
       }
-      if (game.phase === 'playing' && data.botDue !== null && now >= data.botDue) {
+      const active = game.phase === 'playing' || game.phase === 'showing';
+      if (active && data.botDue !== null && now >= data.botDue) {
         const seat = this.botToAct();
         const action =
           seat === null
@@ -533,10 +541,10 @@ export class Room extends DurableObject<Env> {
         data.botDue = null;
       }
       // Alguien pudo pasar a estar controlado por un bot mientras corrÃ­a el turno.
-      if (game.phase === 'playing' && data.botDue === null && this.botToAct() !== null) {
+      if (active && data.botDue === null && this.botToAct() !== null) {
         data.botDue = now + BOT_MIN_MS;
       }
-      if (game.phase === 'playing' && data.deadline !== null && now >= data.deadline) {
+      if (active && data.deadline !== null && now >= data.deadline) {
         const timeout = timeoutAction(game);
         if (timeout && applyAction(game, timeout.seat, timeout.action)) {
           await this.afterGameChange();
