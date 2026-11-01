@@ -36,7 +36,7 @@ const BOT_MAX_MS = 1_900;
 const BOT_SENA_MIN_MS = 1_500;
 const BOT_SENA_MAX_MS = 5_000;
 const NEXT_HAND_MS = 3_500;
-const AWAY_MS = 30_000;
+const AWAY_MS = 15_000;
 const LOBBY_SEAT_MS = 15_000;
 const QUICK_FILL_MS = 20_000;
 const EMPTY_TTL_MS = 2 * 60_000;
@@ -48,6 +48,8 @@ interface Seat {
   bot: boolean;
   connected: boolean;
   leftAt: number | null;
+  /** Nombre de quien se desconectÃ³ y puede volver a su asiento mientras juega un bot. */
+  humanName?: string;
 }
 
 interface RoomData {
@@ -81,14 +83,14 @@ interface Attachment {
 
 export class Room extends DurableObject<Env> {
   private data: RoomData | null = null;
-  // La mirada y las señas viven en memoria: son efímeras y no justifican escribir en disco.
+  // La mirada y las seÃ±as viven en memoria: son efÃ­meras y no justifican escribir en disco.
   private gaze: { y: number; p: number }[] = [];
   private senas: ActiveSena[] = [];
   private lastSena: number[] = [];
   private lastPhrase: number[] = [];
   private botSenasDone = new Map<number, Set<SenaId>>();
   private botSenaAt: number | null = null;
-  // Equipos cuyo bot vio la seña de envido de su compañero en esta mano.
+  // Equipos cuyo bot vio la seÃ±a de envido de su compaÃ±ero en esta mano.
   private envidoHints = new Set<number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -143,7 +145,7 @@ export class Room extends DurableObject<Env> {
   private acceptPlayer(url: URL): Response {
     const data = this.data!;
     const token = url.searchParams.get('token') ?? '';
-    let seat = token ? data.seats.findIndex((s) => s?.token === token && !s.bot) : -1;
+    let seat = token ? data.seats.findIndex((s) => s?.token === token) : -1;
     if (seat < 0) {
       if (data.status !== 'lobby') return new Response('started', { status: 409 });
       seat = data.seats.indexOf(null);
@@ -165,6 +167,11 @@ export class Room extends DurableObject<Env> {
     server.serializeAttachment({ seat } satisfies Attachment);
 
     const occupant = data.seats[seat]!;
+    if (occupant.bot) {
+      occupant.bot = false;
+      occupant.name = occupant.humanName ?? occupant.name;
+      delete occupant.humanName;
+    }
     occupant.connected = true;
     occupant.leftAt = null;
     data.emptySince = null;
@@ -193,6 +200,7 @@ export class Room extends DurableObject<Env> {
       case 'phrase': this.onPhrase(seat, message.i); break;
       case 'act': await this.onAction(seat, message.a); break;
       case 'start': await this.onStart(seat, message.fill === true); break;
+      case 'leave': await this.onLeave(seat); break;
     }
   }
 
@@ -218,6 +226,58 @@ export class Room extends DurableObject<Env> {
     await this.commit();
   }
 
+  /** SaliÃ³ con el botÃ³n: el asiento queda libre en la sala de espera y pasa a un bot en la partida. */
+  private async onLeave(seat: number): Promise<void> {
+    const data = this.data!;
+    const occupant = data.seats[seat];
+    if (!occupant || occupant.bot) return;
+    if (data.status === 'lobby') {
+      data.seats[seat] = null;
+      this.passHost();
+      if (!data.seats.some((s) => s && !s.bot)) data.emptySince = Date.now();
+      this.broadcastRoom();
+      await this.commit();
+      await this.syncDirectory();
+      return;
+    }
+    if (data.status !== 'playing') return;
+    occupant.token = '';
+    this.becomeBot(seat);
+    // Sin nadie que pueda volver no hay partida que sostener.
+    if (!data.seats.some((s) => s && s.token)) {
+      data.emptySince = Date.now() - EMPTY_TTL_MS;
+      if (await this.shouldDestroy(Date.now())) return;
+    }
+    await this.commit();
+  }
+
+  /** Un bot sigue la partida en ese asiento, con el mismo personaje y las mismas cartas. */
+  private becomeBot(seat: number): void {
+    const data = this.data!;
+    const occupant = data.seats[seat]!;
+    if (occupant.token) occupant.humanName = occupant.name;
+    const taken = new Set(data.seats.map((s) => s?.name));
+    let number = 1;
+    while (taken.has(`Bot ${number}`)) number++;
+    occupant.name = `Bot ${number}`;
+    occupant.bot = true;
+    occupant.connected = true;
+    occupant.leftAt = null;
+    this.passHost();
+    const now = Date.now();
+    const game = data.game;
+    if (game?.phase === 'playing' && data.botDue === null && this.botToAct() !== null) data.botDue = now + BOT_MIN_MS;
+    if (this.botSenaAt === null) this.scheduleBotSenas(now);
+    this.broadcastRoom();
+    this.moveBotHeads();
+  }
+
+  private passHost(): void {
+    const data = this.data!;
+    if (data.seats[data.host] && !data.seats[data.host]!.bot) return;
+    data.host = Math.max(0, data.seats.findIndex((s) => s && !s.bot));
+  }
+
   private onGaze(seat: number, rawYaw: unknown, rawPitch: unknown): void {
     if (typeof rawYaw !== 'number' || typeof rawPitch !== 'number') return;
     if (!Number.isFinite(rawYaw) || !Number.isFinite(rawPitch)) return;
@@ -225,13 +285,13 @@ export class Room extends DurableObject<Env> {
     const p = Math.max(MIN_PITCH, Math.min(MAX_PITCH, rawPitch));
     this.gaze[seat] = { y, p };
     this.send(undefined, { t: 'gaze', s: seat, y, p }, seat);
-    // Quien entra al cono mientras dura la seña también la alcanza a ver.
+    // Quien entra al cono mientras dura la seÃ±a tambiÃ©n la alcanza a ver.
     const now = Date.now();
     this.senas = this.senas.filter((sena) => sena.until > now);
     for (const sena of this.senas) this.reveal(sena, seat, now);
   }
 
-  /** Próximo momento en que los bots buscan hacer una seña. Va con su propio reloj: mover la cabeza no lo adelanta. */
+  /** PrÃ³ximo momento en que los bots buscan hacer una seÃ±a. Va con su propio reloj: mover la cabeza no lo adelanta. */
   private scheduleBotSenas(now: number): void {
     const { game, players, seats, status } = this.data!;
     this.botSenaAt = null;
@@ -240,7 +300,7 @@ export class Room extends DurableObject<Env> {
     if (pending) this.botSenaAt = now + BOT_SENA_MIN_MS + Math.random() * (BOT_SENA_MAX_MS - BOT_SENA_MIN_MS);
   }
 
-  /** Los bots hacen señas a escondidas: en momentos al azar y nunca mientras un rival los está mirando. */
+  /** Los bots hacen seÃ±as a escondidas: en momentos al azar y nunca mientras un rival los estÃ¡ mirando. */
   private tryBotSenas(now: number): void {
     const data = this.data!;
     const game = data.game;
@@ -264,7 +324,7 @@ export class Room extends DurableObject<Env> {
       this.botSenasDone.set(seat, done);
       this.lastSena[seat] = now;
       if (id === 'envido' && teamHumans.length === 0) this.envidoHints.add(teamOf(seat));
-      // Mira a su compañero mientras hace el gesto; los demás pueden notar hacia dónde mira.
+      // Mira a su compaÃ±ero mientras hace el gesto; los demÃ¡s pueden notar hacia dÃ³nde mira.
       const y = Math.round(bearingTo(seat, partner, data.players) * 100) / 100;
       this.gaze[seat] = { y, p: 0 };
       this.send(undefined, { t: 'gaze', s: seat, y, p: 0 });
@@ -286,14 +346,11 @@ export class Room extends DurableObject<Env> {
     if (id === 'envido') this.noteEnvidoHint(seat);
   }
 
-  /** La seña va dirigida: el bot la toma si quien la hace lo está mirando. */
+  /** El bot compaÃ±ero siempre estÃ¡ atento a su equipo: no hace falta levantar la vista para pedirle el envido. */
   private noteEnvidoHint(seat: number): void {
     const data = this.data!;
-    const { y, p } = this.gaze[seat]!;
-    for (let bot = 0; bot < data.players; bot++) {
-      if (!data.seats[bot]?.bot || bot === seat || teamOf(bot) !== teamOf(seat)) continue;
-      if (canSee(seat, bot, data.players, y, p)) this.envidoHints.add(teamOf(seat));
-    }
+    const hasBotPartner = data.seats.some((s, bot) => s?.bot && bot !== seat && teamOf(bot) === teamOf(seat));
+    if (hasBotPartner) this.envidoHints.add(teamOf(seat));
   }
 
   private reveal(sena: ActiveSena, observer: number, now: number): void {
@@ -327,7 +384,7 @@ export class Room extends DurableObject<Env> {
     if (data.status !== 'lobby' || seat !== data.host) return;
     if (fill) this.fillWithBots();
     if (data.seats.some((s) => s === null)) {
-      this.send(seat, { t: 'err', msg: 'Todavía faltan jugadores' });
+      this.send(seat, { t: 'err', msg: 'TodavÃ­a faltan jugadores' });
       return;
     }
     await this.startGame();
@@ -366,7 +423,7 @@ export class Room extends DurableObject<Env> {
       const team = Array.from({ length: players }, (_, s) => s).filter(
         (s) => teamOf(s) === responding && !game.hand.folded[s],
       );
-      // Si hay una persona en el equipo, la decisión es suya.
+      // Si hay una persona en el equipo, la decisiÃ³n es suya.
       return team.every((s) => this.isBotControlled(s)) ? (team[0] ?? null) : null;
     }
     return this.isBotControlled(game.hand.turn) ? game.hand.turn : null;
@@ -400,7 +457,7 @@ export class Room extends DurableObject<Env> {
     await this.commit();
   }
 
-  /** Los bots miran a quien le toca, así la mesa no parece de muñecos quietos. */
+  /** Los bots miran a quien le toca, asÃ­ la mesa no parece de muÃ±ecos quietos. */
   private moveBotHeads(): void {
     const { game, players, seats } = this.data!;
     if (!game) return;
@@ -425,7 +482,7 @@ export class Room extends DurableObject<Env> {
         const occupant = data.seats[seat];
         if (occupant && !occupant.bot && occupant.leftAt !== null && now - occupant.leftAt >= LOBBY_SEAT_MS) {
           data.seats[seat] = null;
-          if (seat === data.host) data.host = Math.max(0, data.seats.findIndex((s) => s && !s.bot));
+          this.passHost();
           this.broadcastRoom();
           await this.syncDirectory();
         }
@@ -439,10 +496,16 @@ export class Room extends DurableObject<Env> {
 
     if (await this.shouldDestroy(now)) return;
 
+    if (data.status === 'playing') {
+      data.seats.forEach((occupant, seat) => {
+        if (occupant && !occupant.bot && occupant.leftAt !== null && now - occupant.leftAt >= AWAY_MS) this.becomeBot(seat);
+      });
+    }
+
     if (this.botSenaAt !== null && now >= this.botSenaAt) {
       this.tryBotSenas(now);
       this.scheduleBotSenas(now);
-      // Las señas no se guardan: si no vence nada más, alcanza con programar la próxima alarma.
+      // Las seÃ±as no se guardan: si no vence nada mÃ¡s, alcanza con programar la prÃ³xima alarma.
       const other = this.nextAlarm(false);
       if (other === null || other > now) {
         await this.setNextAlarm();
@@ -469,7 +532,7 @@ export class Room extends DurableObject<Env> {
         }
         data.botDue = null;
       }
-      // Alguien pudo pasar a estar controlado por un bot mientras corría el turno.
+      // Alguien pudo pasar a estar controlado por un bot mientras corrÃ­a el turno.
       if (game.phase === 'playing' && data.botDue === null && this.botToAct() !== null) {
         data.botDue = now + BOT_MIN_MS;
       }

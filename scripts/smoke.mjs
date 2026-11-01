@@ -169,7 +169,8 @@ for (let attempt = 0; attempt < 12 && !sang; attempt++) {
   const partner = (me.seat + 2) % 4;
   // Solo vale si el compañero es uno de los dos últimos de la ronda.
   if ((partner - me.view.mano + 4) % 4 >= 2) {
-    me.send({ t: 'gaze', y: 0, p: 0 });
+    // Con la vista baja en sus cartas: el compañero igual tiene que tomar el pedido.
+    me.send({ t: 'gaze', y: 0, p: -0.6 });
     await sleep(100);
     me.send({ t: 'sena', id: 'envido' });
     const end = Date.now() + 14000;
@@ -183,6 +184,30 @@ for (let attempt = 0; attempt < 12 && !sang; attempt++) {
   me.ws.close();
 }
 check('el bot canta envido cuando su compañero le hace la seña', sang);
+
+// --- Quien sale de la partida es reemplazado por un bot ---
+const code5 = await create(4);
+const stays = await player(code5, 'Queda');
+await until(() => stays.seat >= 0);
+const goes = await player(code5, 'Sale');
+await until(() => goes.seat >= 0);
+const dropped = await player(code5, 'Corta');
+await until(() => dropped.seat >= 0);
+stays.send({ t: 'start', fill: true });
+await until(() => stays.view && goes.view);
+goes.send({ t: 'leave' });
+goes.ws.close();
+check('quien sale con el botón pasa a ser un bot enseguida', await until(() => stays.room.seats[goes.seat]?.bot, 1500));
+dropped.ws.close();
+check('quien se desconecta pasa a ser un bot a los 15 segundos', await until(() => stays.room.seats[dropped.seat]?.bot, 20000));
+const playedBefore = stays.view.rounds.flat().length;
+const handsBefore = stays.view.scores.join();
+check('el bot que lo reemplaza sigue jugando', await until(() => {
+  const answer = stays.view.legal.find((a) => a.t === 'quiero') ?? stays.view.legal.find((a) => a.t === 'play');
+  if (answer && Math.random() < 0.1) stays.send({ t: 'act', a: answer });
+  return stays.view.rounds.flat().length !== playedBefore || stays.view.scores.join() !== handsBefore;
+}, 20000));
+stays.ws.close();
 
 // --- Reconexión con token ---
 const code3 = await create(2);

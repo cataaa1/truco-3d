@@ -519,6 +519,10 @@ export function mountGame(
     handle(message) {
       switch (message.t) {
         case 'room':
+          message.room.seats.forEach((seat, i) => {
+            const before = room.seats[i];
+            if (i !== me && seat?.bot && before && !before.bot) toast(`${before.name} se fue. Sigue un bot en su lugar.`, 3600);
+          });
           room = message.room;
           scene.setTags(names(), lastTurn);
           break;

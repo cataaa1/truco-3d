@@ -227,6 +227,8 @@ async function enter(code: string, name: string): Promise<void> {
   const pending: ServerMessage[] = [];
 
   const leave = () => {
+    // Avisa que se va de verdad: en la partida lo reemplaza un bot enseguida.
+    conn.send({ t: 'leave' });
     conn.close();
     game?.dispose();
     showHome();

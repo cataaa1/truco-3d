@@ -56,7 +56,8 @@ export type ClientMessage =
   | { t: 'gaze'; y: number; p: number }
   | { t: 'sena'; id: SenaId }
   | { t: 'phrase'; i: number }
-  | { t: 'start'; fill: boolean };
+  | { t: 'start'; fill: boolean }
+  | { t: 'leave' };
 
 export type ServerMessage =
   | { t: 'room'; room: RoomInfo; you: number; token: string }
