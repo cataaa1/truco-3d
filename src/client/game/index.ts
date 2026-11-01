@@ -198,7 +198,7 @@ export function mountGame(
         break;
       }
       case 'mazo':
-        toast(`${nameOf(event.seat)} se fue al mazo`);
+        toast(event.seat === me ? 'Te fuiste al mazo' : `${nameOf(event.seat)} se fue al mazo`);
         voices.play(event.seat, 'mazo');
         break;
       case 'envido':
@@ -213,6 +213,8 @@ export function mountGame(
         toast(event.seat === me ? 'Ganaste el envido: mostrá tus cartas o los puntos son de ellos' : `${nameOf(event.seat)} tiene que mostrar sus cartas`, 3600);
         break;
       case 'show':
+        // Los carteles anteriores taparían las cartas que se acaban de mostrar.
+        $('toasts').replaceChildren();
         toast(
           event.shown
             ? `${event.seat === me ? 'Mostraste' : `${nameOf(event.seat)} mostró`} ${event.cards.map(cardName).join(' y ')}: ${event.points} para ${teamLabel(event.team)}`
