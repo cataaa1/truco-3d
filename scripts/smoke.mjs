@@ -102,8 +102,8 @@ a.send({ t: 'sena', id: 'tres' });
 await sleep(100);
 const dBearing = Math.atan2(Math.sin((2 * Math.PI * 1) / 4), 1 - Math.cos((2 * Math.PI * 1) / 4));
 d.send({ t: 'gaze', y: dBearing, p: 0 });
-await sleep(200);
-check('quien gira a tiempo alcanza a verla', d.inbox.some((m) => m.t === 'sena' && m.id === 'tres'));
+// Contra el sitio real, la respuesta tarda más que en local. Solo llega si el giro entró durante la seña.
+check('quien gira a tiempo alcanza a verla', await until(() => d.inbox.some((m) => m.t === 'sena' && m.id === 'tres'), 1500));
 
 await sleep(800);
 for (const p of players) p.inbox.length = 0;
