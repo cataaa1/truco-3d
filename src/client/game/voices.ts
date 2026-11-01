@@ -1,4 +1,5 @@
 import { bearingTo } from '../../shared/protocol';
+import barUrl from './assets/ambiente-bar.mp3?url';
 
 // Solo son direcciones de archivo: cada audio se baja recién cuando su voz está en la mesa.
 const FILES = import.meta.glob('./assets/voces/*/*.mp3', {
@@ -15,6 +16,9 @@ for (const [path, url] of Object.entries(FILES)) {
   clips.set(match[2]!, url);
   LIBRARY.set(match[1]!, clips);
 }
+// El ruido del bar queda bien de fondo: las voces de la mesa tienen que oírse encima.
+const BAR_VOLUME = 0.25;
+
 const VOICE_NAMES = [...LIBRARY.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
 function hash(text: string): number {
@@ -34,12 +38,13 @@ function speakFallback(text: string): void {
 }
 
 export class TableVoices {
-  muted = false;
+  private isMuted = false;
   private readonly context = window.AudioContext ? new AudioContext() : null;
   private readonly buffers = new Map<string, AudioBuffer>();
   private readonly playing = new Map<number, AudioBufferSourceNode>();
   private readonly resume = () => void this.context?.resume();
   private closed = false;
+  private barGain: GainNode | null = null;
 
   constructor(
     private readonly code: string,
@@ -48,7 +53,39 @@ export class TableVoices {
   ) {
     document.addEventListener('pointerdown', this.resume);
     document.addEventListener('keydown', this.resume);
-    if (VOICE_NAMES.length > 0) this.scheduleLoading();
+    this.scheduleLoading();
+  }
+
+  get muted(): boolean {
+    return this.isMuted;
+  }
+
+  set muted(value: boolean) {
+    this.isMuted = value;
+    if (this.barGain) this.barGain.gain.value = value ? 0 : BAR_VOLUME;
+    if (value) for (const source of this.playing.values()) source.stop();
+  }
+
+  /** Empieza a sonar con el primer clic: antes el navegador no deja reproducir nada. */
+  private async startBar(): Promise<void> {
+    if (!this.context) return;
+    try {
+      const response = await fetch(barUrl);
+      const buffer = await this.context.decodeAudioData(await response.arrayBuffer());
+      if (this.closed) return;
+      const source = this.context.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      // El relleno que agrega el formato mp3 en las puntas queda afuera del bucle.
+      source.loopStart = 0.06;
+      source.loopEnd = buffer.duration - 0.06;
+      this.barGain = this.context.createGain();
+      this.barGain.gain.value = this.isMuted ? 0 : BAR_VOLUME;
+      source.connect(this.barGain).connect(this.context.destination);
+      source.start(0, 0.06);
+    } catch {
+      // Sin ruido de fondo se juega igual.
+    }
   }
 
   /**
@@ -72,6 +109,7 @@ export class TableVoices {
     const voices = seats.flatMap((seat) => this.voiceOf(seat) ?? []);
     const queue = voices.flatMap((voice) => [...(LIBRARY.get(voice ?? '') ?? new Map<string, string>())].map(([clip, url]) => ({ key: `${voice}/${clip}`, url })));
     for (let worker = 0; worker < 4; worker++) void this.drain(queue);
+    void this.startBar();
   }
 
   private async drain(queue: { key: string; url: string }[]): Promise<void> {

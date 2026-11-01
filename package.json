@@ -12,7 +12,8 @@
     "models": "node scripts/blender/run.mjs",
     "deploy": "npm run build && wrangler deploy",
     "cards": "node scripts/build-cards.mjs",
-    "voices": "node scripts/build-voices.mjs"
+    "voices": "node scripts/build-voices.mjs",
+    "ambiente": "node scripts/build-ambiente.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261030.1",

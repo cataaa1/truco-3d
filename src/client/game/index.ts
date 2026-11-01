@@ -120,7 +120,7 @@ export function mountGame(
       <div class="hud toasts" id="toasts" aria-live="polite"></div>
       <div class="hud tools">
         <button id="guide-btn">Guía <kbd>G</kbd></button>
-        <button id="mute-btn">Voz: sí</button>
+        <button id="mute-btn">Sonido: sí</button>
         <button id="leave-btn">Salir</button>
       </div>
       <div class="hud hint" id="hint">Hacé clic en la mesa para mirar con el mouse. Con <kbd>Esc</kbd> recuperás el cursor.</div>
@@ -409,7 +409,7 @@ export function mountGame(
   });
   $('mute-btn').addEventListener('click', () => {
     voices.muted = !voices.muted;
-    $('mute-btn').textContent = `Voz: ${voices.muted ? 'no' : 'sí'}`;
+    $('mute-btn').textContent = `Sonido: ${voices.muted ? 'no' : 'sí'}`;
   });
 
   // Solo se manda la mirada si la cabeza se movió, para cuidar el cupo diario del servidor.
