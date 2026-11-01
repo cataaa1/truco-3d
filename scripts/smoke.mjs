@@ -141,27 +141,21 @@ while (solo.view?.phase !== 'gameOver' && Date.now() - started < 300_000) {
 }
 check(`la partida contra el bot termina (${moves} jugadas, ${solo.view?.scores})`, solo.view?.phase === 'gameOver');
 
-// --- Un bot compañero hace una seña cuando lo miran ---
+// --- Los bots hacen señas con su propio reloj, sin depender de la mirada ---
 const code4 = await create(4);
 const human = await player(code4, 'Compa');
 await until(() => human.seat >= 0);
 human.send({ t: 'start', fill: true });
 await until(() => human.view);
+// Una sola orden de mirada: la cabeza queda quieta y la seña igual tiene que llegar.
 human.send({ t: 'gaze', y: 0, p: 0 });
-// El bot hace sus señas en momentos al azar: quien mira de frente a su compañero las alcanza a ver.
-let seenFromPartner = false;
-for (let i = 0; i < 80 && !seenFromPartner; i++) {
-  human.send({ t: 'gaze', y: i % 2 ? 0.02 : 0, p: 0 });
-  await sleep(100);
-  seenFromPartner = human.inbox.some((m) => m.t === 'sena' && m.s === (human.seat + 2) % 4);
-}
-check('el bot compañero le hace una seña a quien lo mira', seenFromPartner);
+check('el bot compañero hace su seña sin que nadie mueva la cabeza', await until(() => human.inbox.some((m) => m.t === 'sena' && m.s === (human.seat + 2) % 4), 25000));
+const rivalBearing = Math.atan2(1, 1);
+human.send({ t: 'gaze', y: rivalBearing, p: 0 });
+await sleep(800);
 human.inbox.length = 0;
-human.send({ t: 'gaze', y: 0.785, p: 0 });
-await sleep(150);
-human.send({ t: 'gaze', y: 0.01, p: -0.8 });
-await sleep(2200);
-check('sin mirarlo no llega ninguna seña', !human.inbox.some((m) => m.t === 'sena' && m.s === (human.seat + 2) % 4));
+await sleep(7000);
+check('el bot rival no hace señas mientras lo miran', !human.inbox.some((m) => m.t === 'sena' && m.s === (human.seat + 1) % 4));
 human.ws.close();
 
 // --- El bot canta envido cuando su compañero le hace la seña ---

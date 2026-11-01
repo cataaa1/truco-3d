@@ -278,7 +278,7 @@ export function mountGame(
       SENAS.forEach((sena, i) => {
         const row = document.createElement('button');
         row.className = 'sena-row';
-        row.append(faceThumbnail(scene.faceAtlas, faceSlot(sena.id), 80));
+        row.append(faceThumbnail(faceSlot(sena.id), 80));
         const text = document.createElement('span');
         text.textContent = `${sena.card}: ${sena.gesture}`;
         row.append(text);

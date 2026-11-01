@@ -31,7 +31,7 @@ import type { CardId } from '../../engine/cards';
 import type { PlayerView } from '../../engine/game';
 import { MAX_PITCH, MAX_YAW, MIN_PITCH } from '../../shared/protocol';
 import { BACK_SLOT, buildCardAtlas, buildFaceAtlas, CARD_GRID, FACE_GRID, NEUTRAL_FACE } from './atlas';
-import { appearanceFor, characterMaterial, setCharacterInstances } from './characters';
+import { appearanceFor, characterMaterial, faceMaterial, setCharacterInstances, smoothNormals } from './characters';
 import cardArtUrl from './assets/cartas.webp?url';
 
 // El mazo empieza a bajar apenas carga este módulo, que se pide desde la pantalla de inicio.
@@ -40,7 +40,7 @@ cardArt.src = cardArtUrl;
 const cardArtReady = cardArt.decode();
 cardArtReady.catch(() => {});
 
-const EYE_HEIGHT = 1.18;
+const EYE_HEIGHT = 1.22;
 const TABLE_Y = 0.74;
 const HEAD_RADIUS = 0.17;
 const FOV = 55;
@@ -146,7 +146,6 @@ export class TableScene {
   private readonly tagCanvas: HTMLCanvasElement;
   private readonly heads: Head[];
   private headMesh: InstancedMesh;
-  private headLocal = new Matrix4();
   private bodies: InstancedMesh | null = null;
   private readonly sprites = new Map<string, CardSprite>();
   private myCards: CardId[] = [];
@@ -207,6 +206,8 @@ export class TableScene {
 
     this.faces = atlasQuads(this.faceAtlas, FACE_GRID.cols, FACE_GRID.rows, others, anisotropy, curvedFace());
     this.faces.mesh.count = others;
+    this.faces.mesh.material = faceMaterial(this.faces.texture, [FACE_GRID.cols, FACE_GRID.rows], new Matrix4().makeScale(FACE_SIZE, FACE_SIZE, 1));
+    setCharacterInstances(this.faces.mesh.geometry, this.otherSeats().map((seat) => this.lookOf(seat)), false);
     this.scene.add(this.faces.mesh);
 
     this.tagCanvas = document.createElement('canvas');
@@ -288,7 +289,11 @@ export class TableScene {
     const table = part('mesa');
     const chairModel = part('silla');
     chairModel.updateMatrix();
-    this.buildCharacters(gltf.scene.getObjectByName('cuerpo') as Mesh, gltf.scene.getObjectByName('cabeza') as Mesh);
+    this.buildCharacters(
+      gltf.scene.getObjectByName('cuerpo') as Mesh,
+      gltf.scene.getObjectByName('cabeza') as Mesh,
+      gltf.scene.getObjectByName('cara') as Mesh,
+    );
 
     const tableHolder = new Object3D();
     tableHolder.position.y = TABLE_Y;
@@ -321,14 +326,13 @@ export class TableScene {
   }
 
   /** Reemplaza los muñecos provisorios. Mi cuerpo también se dibuja: al mirar abajo veo mis brazos. */
-  private buildCharacters(bodyModel: Mesh, headModel: Mesh): void {
-    const material = characterMaterial();
+  private buildCharacters(bodyModel: Mesh, headModel: Mesh, faceModel: Mesh): void {
     const others = this.otherSeats();
     const seats = [...others, this.me];
-    const looks = seats.map((seat) => appearanceFor(this.roomCode, seat, seat % 2 === this.me % 2));
+    const looks = seats.map((seat) => this.lookOf(seat));
 
     bodyModel.updateMatrix();
-    const bodies = new InstancedMesh(bodyModel.geometry, material, seats.length);
+    const bodies = new InstancedMesh(smoothNormals(bodyModel.geometry), characterMaterial(bodyModel.matrix), seats.length);
     bodies.frustumCulled = false;
     seats.forEach((seat, index) => {
       const pos = this.seatPosition(seat);
@@ -337,15 +341,23 @@ export class TableScene {
       helper.rotation.set(0, this.seatAngle(seat) + Math.PI, 0);
       helper.scale.set(1, 1, 1);
       helper.updateMatrix();
-      bodies.setMatrixAt(index, matrix.multiplyMatrices(helper.matrix, bodyModel.matrix));
+      bodies.setMatrixAt(index, helper.matrix);
     });
-    setCharacterInstances(bodies.geometry, looks);
+    setCharacterInstances(bodies.geometry, looks, false);
 
     headModel.updateMatrix();
-    this.headLocal = headModel.matrix.clone();
-    const heads = new InstancedMesh(headModel.geometry, material, others.length);
+    const heads = new InstancedMesh(smoothNormals(headModel.geometry), characterMaterial(headModel.matrix), others.length);
     heads.frustumCulled = false;
-    setCharacterInstances(heads.geometry, looks.slice(0, others.length));
+    setCharacterInstances(heads.geometry, looks.slice(0, others.length), true);
+
+    // La cara pasa del plano provisorio a seguir el relieve de la cabeza.
+    faceModel.updateMatrix();
+    const faceShape = smoothNormals(faceModel.geometry);
+    faceShape.setAttribute('aSlot', this.faces.slots);
+    setCharacterInstances(faceShape, looks.slice(0, others.length), true);
+    this.faces.mesh.geometry.dispose();
+    this.faces.mesh.geometry = faceShape as PlaneGeometry;
+    (this.faces.mesh.material as ShaderMaterial).uniforms.uNode!.value = faceModel.matrix;
 
     for (const old of [this.bodies, this.headMesh]) {
       if (!old) continue;
@@ -358,6 +370,10 @@ export class TableScene {
     this.headMesh = heads;
     this.scene.add(bodies, heads);
     this.updateHeadMatrices();
+  }
+
+  private lookOf(seat: number) {
+    return appearanceFor(this.roomCode, seat, seat % 2 === this.me % 2);
   }
 
   /** Posición relativa: yo siempre en el sur, y el siguiente asiento a mi derecha. */
@@ -466,7 +482,7 @@ export class TableScene {
       .copy(eye)
       .addScaledVector(forward, 0.36)
       .addScaledVector(right, offset * 0.076);
-    out.position.y += -0.24 - Math.abs(offset) * 0.004 + lift;
+    out.position.y += -0.28 - Math.abs(offset) * 0.004 + lift;
     out.lookAt(eye);
     out.rotateZ(-offset * 0.06);
   }
@@ -610,9 +626,8 @@ export class TableScene {
       helper.rotation.set(-head.pitch, this.seatAngle(seat) + Math.PI - head.yaw, 0);
       helper.scale.set(1, 1, 1);
       helper.updateMatrix();
-      this.headMesh.setMatrixAt(index, matrix.multiplyMatrices(helper.matrix, this.headLocal));
-      matrix.makeScale(FACE_SIZE, FACE_SIZE, 1).premultiply(helper.matrix);
-      this.faces.mesh.setMatrixAt(index, matrix);
+      this.headMesh.setMatrixAt(index, helper.matrix);
+      this.faces.mesh.setMatrixAt(index, helper.matrix);
       this.faces.slots.setX(index, head.face);
     });
     this.headMesh.instanceMatrix.needsUpdate = true;

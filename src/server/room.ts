@@ -33,6 +33,8 @@ import type { Env } from './index';
 const TURN_MS = 25_000;
 const BOT_MIN_MS = 900;
 const BOT_MAX_MS = 1_900;
+const BOT_SENA_MIN_MS = 1_500;
+const BOT_SENA_MAX_MS = 5_000;
 const NEXT_HAND_MS = 3_500;
 const AWAY_MS = 30_000;
 const LOBBY_SEAT_MS = 15_000;
@@ -85,6 +87,7 @@ export class Room extends DurableObject<Env> {
   private lastSena: number[] = [];
   private lastPhrase: number[] = [];
   private botSenasDone = new Map<number, Set<SenaId>>();
+  private botSenaAt: number | null = null;
   // Equipos cuyo bot vio la seña de envido de su compañero en esta mano.
   private envidoHints = new Set<number>();
 
@@ -226,7 +229,15 @@ export class Room extends DurableObject<Env> {
     const now = Date.now();
     this.senas = this.senas.filter((sena) => sena.until > now);
     for (const sena of this.senas) this.reveal(sena, seat, now);
-    this.tryBotSenas(now);
+  }
+
+  /** Próximo momento en que los bots buscan hacer una seña. Va con su propio reloj: mover la cabeza no lo adelanta. */
+  private scheduleBotSenas(now: number): void {
+    const { game, players, seats, status } = this.data!;
+    this.botSenaAt = null;
+    if (!game || status !== 'playing' || game.phase !== 'playing' || players === 2) return;
+    const pending = seats.some((s, seat) => s?.bot && botSena(game, seat, this.botSenasDone.get(seat) ?? new Set()) !== null);
+    if (pending) this.botSenaAt = now + BOT_SENA_MIN_MS + Math.random() * (BOT_SENA_MAX_MS - BOT_SENA_MIN_MS);
   }
 
   /** Los bots hacen señas a escondidas: en momentos al azar y nunca mientras un rival los está mirando. */
@@ -240,7 +251,7 @@ export class Room extends DurableObject<Env> {
       return canSee(observer, target, data.players, y, p);
     };
     for (let seat = 0; seat < data.players; seat++) {
-      if (!data.seats[seat]?.bot || now - this.lastSena[seat]! < SENA_MS + 800 || Math.random() > 0.12) continue;
+      if (!data.seats[seat]?.bot || now - this.lastSena[seat]! < SENA_MS + 800 || Math.random() > 0.5) continue;
       if (humans.some((h) => teamOf(h) !== teamOf(seat) && sees(h, seat))) continue;
       const teamHumans = humans.filter((h) => teamOf(h) === teamOf(seat));
       const partner =
@@ -367,10 +378,12 @@ export class Room extends DurableObject<Env> {
     const events = game.events;
     game.events = [];
     const now = Date.now();
-    if (events.some((event) => event.e === 'deal')) {
+    const dealt = events.some((event) => event.e === 'deal');
+    if (dealt) {
       this.botSenasDone.clear();
       this.envidoHints.clear();
     }
+    if (dealt || this.botSenaAt === null || game.phase !== 'playing') this.scheduleBotSenas(now);
 
     data.deadline = game.phase === 'playing' ? now + TURN_MS : null;
     data.nextHandDue = game.phase === 'handOver' ? now + NEXT_HAND_MS : null;
@@ -384,7 +397,6 @@ export class Room extends DurableObject<Env> {
 
     for (let seat = 0; seat < data.players; seat++) this.sendGame(seat, events);
     this.moveBotHeads();
-    this.tryBotSenas(Date.now());
     await this.commit();
   }
 
@@ -426,6 +438,17 @@ export class Room extends DurableObject<Env> {
     }
 
     if (await this.shouldDestroy(now)) return;
+
+    if (this.botSenaAt !== null && now >= this.botSenaAt) {
+      this.tryBotSenas(now);
+      this.scheduleBotSenas(now);
+      // Las señas no se guardan: si no vence nada más, alcanza con programar la próxima alarma.
+      const other = this.nextAlarm(false);
+      if (other === null || other > now) {
+        await this.setNextAlarm();
+        return;
+      }
+    }
 
     const game = data.game;
     if (game && data.status === 'playing') {
@@ -476,7 +499,7 @@ export class Room extends DurableObject<Env> {
     return true;
   }
 
-  private nextAlarm(): number | null {
+  private nextAlarm(withSenas = true): number | null {
     const data = this.data!;
     const leftAts = data.seats.flatMap((s) => (s && !s.bot && s.leftAt !== null ? [s.leftAt] : []));
     const candidates = [
@@ -484,6 +507,7 @@ export class Room extends DurableObject<Env> {
       data.botDue,
       data.nextHandDue,
       data.autoStartAt,
+      withSenas ? this.botSenaAt : null,
       data.emptySince === null ? null : data.emptySince + EMPTY_TTL_MS,
       data.finishedAt === null ? null : data.finishedAt + FINISHED_TTL_MS,
       ...leftAts.map((t) => t + (data.status === 'lobby' ? LOBBY_SEAT_MS : AWAY_MS)),
@@ -494,6 +518,10 @@ export class Room extends DurableObject<Env> {
   private async commit(): Promise<void> {
     if (!this.data) return;
     await this.ctx.storage.put('room', this.data);
+    await this.setNextAlarm();
+  }
+
+  private async setNextAlarm(): Promise<void> {
     const next = this.nextAlarm();
     if (next === null) await this.ctx.storage.deleteAlarm();
     else await this.ctx.storage.setAlarm(Math.max(next, Date.now() + 10));

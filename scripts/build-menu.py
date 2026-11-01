@@ -38,13 +38,16 @@ def from_edges(background):
     return (flood != 128).astype(np.uint8) * 255
 
 
-def cut(image, light_background):
+def cut(image, light_background, holes=False):
     b, g, r = [image[:, :, channel].astype(np.int16) for channel in range(3)]
     if light_background:
         background = (b > 232) & (g > 232) & (r > 232)
     else:
         background = (r > 135) & (b > 135) & (g < 115) & (r - g > 60) & (b - g > 60)
     solid = from_edges(background)
+    if holes:
+        # Los íconos tienen fondo también entre las figuras, donde el borde no llega.
+        solid[cv2.dilate(background.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0] = 0
     solid = cv2.morphologyEx(solid, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
     count, labels, stats, _ = cv2.connectedComponentsWithStats(solid)
     solid = np.where(labels == 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA])), 255, 0).astype(np.uint8)
@@ -67,7 +70,7 @@ def save(image, name, quality=QUALITY):
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     for source, name, widths in CUTOUTS:
-        rgba = cut(read(SOURCE / source), source == "cartel.png")
+        rgba = cut(read(SOURCE / source), source == "cartel.png", source.startswith("icono-"))
         for suffix, width in widths.items():
             width = min(width, rgba.shape[1])
             height = round(rgba.shape[0] * width / rgba.shape[1])

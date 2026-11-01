@@ -87,6 +87,9 @@ def light_at(pos, normal, baked=True):
 
 
 class Part:
+    # Fusionar puntos iguales ahorra vértices en el salón.
+    merge_points = True
+
     def __init__(self, name, baked=True):
         self.name = name
         self.baked = baked
@@ -186,7 +189,8 @@ class Part:
     def finish(self):
         mesh = bpy.data.meshes.new(self.name)
         self.bm.verts.ensure_lookup_table()
-        bmesh.ops.remove_doubles(self.bm, verts=self.bm.verts, dist=0.00001)
+        if self.merge_points:
+            bmesh.ops.remove_doubles(self.bm, verts=self.bm.verts, dist=0.00001)
         self.bm.to_mesh(mesh)
         faces = len(self.bm.faces)
         self.bm.free()
@@ -648,10 +652,12 @@ def build_chair():
 
 class Figure(Part):
     """Personaje sin textura. En las UV viaja qué pinta cada cara:
-    x = tipo de color (0 fijo, 1 piel, 2 pelo o sombrero, 3 ropa del equipo)
-    y = variante de cabeza (0 siempre visible, 1 a 6 según el personaje)."""
+    x = tipo de color (0 fijo, 1 piel, 2 pelo, 3 ropa del equipo, 4 sombrero o detalle)
+    y = variante de personaje (0 siempre visible, 1 a 6 según el personaje)."""
 
-    FIXED, SKIN, HAIR, CLOTH = 0, 1, 2, 3
+    FIXED, SKIN, HAIR, CLOTH, ACCENT = 0, 1, 2, 3, 4
+    # Las variantes repiten piezas en el mismo lugar: fusionarlas borraría las de los demás.
+    merge_points = False
 
     def __init__(self, name):
         super().__init__(name, baked=False)
@@ -661,9 +667,10 @@ class Figure(Part):
     def face(self, corners, region, uvs, tint=WHITE, normal=None, glow=False):
         verts = [self.bm.verts.new((c[0], -c[2], c[1])) for c in corners]
         bm_face = self.bm.faces.new(verts)
-        for loop in bm_face.loops:
-            loop[self.uv].uv = (self.kind / 4, 1 - self.variant / 8)
-            loop[self.color] = (tint[0], tint[1], tint[2], 1.0)
+        for loop, corner in zip(bm_face.loops, corners):
+            loop[self.uv].uv = (self.kind / 8, 1 - self.variant / 8)
+            base = tint(corner) if callable(tint) else tint
+            loop[self.color] = (base[0], base[1], base[2], 1.0)
         return bm_face
 
     def use(self, kind, variant=None):
@@ -671,150 +678,718 @@ class Figure(Part):
         if variant is not None:
             self.variant = variant
 
-    def ellipsoid(self, center, radii, keep=None, tint=WHITE, segments=14, rings=10):
-        def point(i, j):
-            lat = math.pi * (j / rings - 0.5)
-            lon = 2 * math.pi * i / segments
+    def grid(self, point, nu, nv, tint=WHITE, kind=None):
+        """Superficie continua: point(u, v) con u y v entre 0 y 1. Mirada de afuera, u va a la derecha y v hacia arriba."""
+        base_kind = self.kind
+        for j in range(nv):
+            for i in range(nu):
+                if kind:
+                    self.kind = kind((i + 0.5) / nu, (j + 0.5) / nv)
+                self.face(
+                    (point(i / nu, j / nv), point((i + 1) / nu, j / nv), point((i + 1) / nu, (j + 1) / nv), point(i / nu, (j + 1) / nv)),
+                    "white",
+                    (),
+                    tint,
+                )
+        self.kind = base_kind
+
+    def ellipsoid(self, center, radii, tint=WHITE, segments=12, rings=8):
+        def point(u, v):
+            lat = math.pi * (v - 0.5)
+            lon = 2 * math.pi * u
             return (
                 center[0] + radii[0] * math.cos(lat) * math.sin(lon),
                 center[1] + radii[1] * math.sin(lat),
                 center[2] + radii[2] * math.cos(lat) * math.cos(lon),
             )
 
-        for j in range(rings):
-            for i in range(segments):
-                corners = [point(i, j), point(i + 1, j), point(i + 1, j + 1), point(i, j + 1)]
-                if keep and not keep(*[sum(c[k] for c in corners) / 4 for k in range(3)]):
-                    continue
-                if j == 0:
-                    self.face((corners[0], corners[3], corners[2]), "white", (), tint)
-                elif j == rings - 1:
-                    self.face((corners[0], corners[1], corners[2]), "white", (), tint)
-                else:
-                    self.face(corners, "white", (), tint)
+        self.grid(point, segments, rings, tint)
 
-    def tube(self, sections, tint=WHITE, segments=10):
-        """Une elipses (rx, rz, y, cz) de abajo hacia arriba."""
-        for index in range(len(sections) - 1):
-            a, b = sections[index], sections[index + 1]
+    def sweep(self, path, radii, tint=WHITE, segments=10, smooth_steps=4, flat=1.0, closed=False):
+        """Tubo que sigue un recorrido suavizado. radii tiene un radio por punto del recorrido."""
+        points, sizes = catmull(path, radii, smooth_steps, closed)
+        count = len(points)
+        tangent = normalize(sub(points[1], points[0]))
+        helper_axis = (0.0, 1.0, 0.0) if abs(tangent[1]) < 0.9 else (1.0, 0.0, 0.0)
+        u = normalize(cross(tangent, helper_axis))
+        rings = []
+        for index in range(count):
+            ahead = points[min(index + 1, count - 1)]
+            behind = points[max(index - 1, 0)]
+            tangent = normalize(sub(ahead, behind))
+            # Transporte paralelo: el tubo no se retuerce en las curvas.
+            side = sub(u, tuple(tangent[k] * sum(u[m] * tangent[m] for m in range(3)) for k in range(3)))
+            u = normalize(side)
+            v = cross(tangent, u)
+            rings.append((points[index], sizes[index], u, v))
+        for index in range(count - 1):
+            a, b = rings[index], rings[index + 1]
+
+            def at(ring, t):
+                c, r, ru, rv = ring
+                return tuple(c[k] + r * (math.cos(t) * ru[k] + flat * math.sin(t) * rv[k]) for k in range(3))
+
             for i in range(segments):
                 t0, t1 = 2 * math.pi * i / segments, 2 * math.pi * (i + 1) / segments
-                self.face(
-                    (
-                        (a[0] * math.sin(t0), a[2], a[3] + a[1] * math.cos(t0)),
-                        (a[0] * math.sin(t1), a[2], a[3] + a[1] * math.cos(t1)),
-                        (b[0] * math.sin(t1), b[2], b[3] + b[1] * math.cos(t1)),
-                        (b[0] * math.sin(t0), b[2], b[3] + b[1] * math.cos(t0)),
-                    ),
-                    "white",
-                    (),
-                    tint,
-                )
-
-    def limb(self, a, b, r0, r1, tint=WHITE, segments=6):
-        axis = normalize(sub(b, a))
-        helper_axis = (0.0, 1.0, 0.0) if abs(axis[1]) < 0.9 else (1.0, 0.0, 0.0)
-        u = normalize(cross(axis, helper_axis))
-        v = cross(axis, u)
-
-        def ring(center, radius, t):
-            return tuple(center[k] + radius * (math.cos(t) * u[k] + math.sin(t) * v[k]) for k in range(3))
-
-        for i in range(segments):
-            t0, t1 = 2 * math.pi * i / segments, 2 * math.pi * (i + 1) / segments
-            self.face((ring(a, r0, t0), ring(a, r0, t1), ring(b, r1, t1), ring(b, r1, t0)), "white", (), tint)
+                self.face((at(a, t0), at(a, t1), at(b, t1), at(b, t0)), "white", (), tint)
 
 
-SHIRT = srgb(0xcfc5b0)
+def clamp01(x):
+    return max(0.0, min(1.0, x))
+
+
+def smooth(a, b, x):
+    t = clamp01((x - a) / (b - a))
+    return t * t * (3 - 2 * t)
+
+
+def lerp(a, b, t):
+    return a + (b - a) * t
+
+
+def mix(a, b, t):
+    return tuple(lerp(a[k], b[k], t) for k in range(3))
+
+
+def scale(color, amount):
+    return tuple(c * amount for c in color)
+
+
+def bell(x, y, cx, cy, sx, sy):
+    return math.exp(-(((x - cx) / sx) ** 2) - ((y - cy) / sy) ** 2)
+
+
+def catmull(path, radii, steps, closed=False):
+    if closed:
+        path = [path[-1], *path, path[0], path[1]]
+        radii = [radii[-1], *radii, radii[0], radii[1]]
+    else:
+        path = [path[0], *path, path[-1]]
+        radii = [radii[0], *radii, radii[-1]]
+    points, sizes = [], []
+    for index in range(1, len(path) - 2):
+        p0, p1, p2, p3 = path[index - 1], path[index], path[index + 1], path[index + 2]
+        for step in range(steps):
+            t = step / steps
+            points.append(tuple(
+                0.5 * (2 * p1[k] + (p2[k] - p0[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t * t + (3 * p1[k] - p0[k] - 3 * p2[k] + p3[k]) * t ** 3)
+                for k in range(3)
+            ))
+            sizes.append(lerp(radii[index], radii[index + 1], t))
+    points.append(path[-2])
+    sizes.append(radii[-2])
+    return points, sizes
+
+
+# ---- Cabeza ----
+# El centro de la cabeza es el ojo de la cámara. Adelante es +z.
+HEAD_RX, HEAD_RY, HEAD_RZ = 0.128, 0.162, 0.148
+HEAD_CENTER = (0.0, 0.0, -0.008)
+# La cara pintada cubre este medio ancho alrededor del centro; coincide con el dibujo de atlas.ts.
+FACE_HALF = 0.13
+
+
+def head_point(lon, lat):
+    cos_lat = math.cos(lat)
+    x = HEAD_RX * cos_lat * math.sin(lon)
+    y = HEAD_RY * math.sin(lat)
+    z = HEAD_RZ * cos_lat * math.cos(lon)
+    low = smooth(-0.05, -0.165, y)
+    x *= (1 - 0.34 * low) * (1 + 0.03 * smooth(0.02, 0.12, y))
+    # Quijada: la parte baja de la cara se mantiene ancha antes de cerrar en el mentón.
+    x *= 1 + 0.05 * bell(0, y, 0, -0.1, 1, 0.04)
+    if z < 0:
+        z *= (1 + 0.1 * smooth(-0.02, 0.08, y)) * (1 - 0.42 * low)
+    else:
+        z *= 1 - 0.1 * low
+    side = abs(x)
+    relief = (
+        0.006 * bell(side, y, 0.03, 0.05, 0.06, 0.016)     # Arco de las cejas.
+        - 0.013 * bell(side, y, 0.053, 0.018, 0.028, 0.017)  # Cuencas de los ojos.
+        + 0.007 * bell(side, y, 0.085, -0.03, 0.04, 0.03)    # Pómulos.
+        + 0.012 * bell(x, y, 0, 0.012, 0.011, 0.03)          # Tabique.
+        + 0.029 * bell(x, y, 0, -0.033, 0.016, 0.023)        # Nariz.
+        + 0.012 * bell(x, y, 0, -0.043, 0.011, 0.011)        # Punta.
+        + 0.009 * bell(side, y, 0.017, -0.05, 0.008, 0.008)  # Aletas.
+        - 0.004 * bell(x, y, 0, -0.067, 0.02, 0.007)         # Bajo la nariz.
+        + 0.006 * bell(x, y, 0, -0.083, 0.03, 0.012)         # Labios.
+        - 0.005 * bell(x, y, 0, -0.106, 0.032, 0.007)        # Bajo el labio.
+        + 0.009 * bell(x, y, 0, -0.13, 0.032, 0.018)         # Mentón.
+        - 0.004 * bell(side, y, 0.115, 0.05, 0.02, 0.05)     # Sienes.
+    )
+    z += relief * smooth(0.02, 0.09, z)
+    return (x + HEAD_CENTER[0], y + HEAD_CENTER[1], z + HEAD_CENTER[2])
+
+
+def warp(s, gain):
+    return gain * s + (1 - gain) * s ** 3
+
+
+def head_grid(u, v):
+    # Más vértices en el centro de la cara, donde está el relieve.
+    return head_point(math.pi * warp(2 * u - 1, 0.35), (math.pi / 2) * warp(2 * v - 1, 0.5))
+
+
+def skin_tint(p):
+    x, y, z = p
+    shade = 1 - 0.28 * smooth(-0.1, -0.16, y) * smooth(0.14, -0.02, z)
+    # Los costados caen en sombra: le da volumen a la cara aunque la luz venga de frente.
+    shade *= 1 - 0.2 * smooth(0.07, 0.0, z) * smooth(0.09, 0.0, y)
+    blush = 0.06 * bell(abs(x), y, 0.08, -0.035, 0.035, 0.025) + 0.14 * bell(x, y, 0, -0.04, 0.018, 0.016)
+    return (shade, shade * (1 - blush), shade * (1 - blush * 1.1))
+
+
+def surface_at(x, y):
+    """Punto de la cara que está frente a (x, y)."""
+    lon, lat = math.asin(clamp01(abs(x) / HEAD_RX) * 0.99) * (1 if x >= 0 else -1), math.asin(max(-0.99, min(0.99, y / HEAD_RY)))
+    for _ in range(8):
+        p = head_point(lon, lat)
+        lat += (y - p[1]) / (HEAD_RY * max(0.2, math.cos(lat)))
+        lon += (x - p[0]) / (HEAD_RX * max(0.2, math.cos(lat)))
+    return head_point(lon, lat)
+
+
+def outward(p):
+    return normalize(sub(p, HEAD_CENTER))
+
+
+def keyed(*keys):
+    """Línea alrededor de la cabeza: pares (grados desde el frente, grados de latitud), simétrica."""
+
+    def line(lon):
+        degrees = abs(math.degrees(lon))
+        degrees = min(degrees, 360 - degrees)
+        for (a, va), (b, vb) in zip(keys, keys[1:]):
+            if degrees <= b:
+                return math.radians(lerp(va, vb, smooth(a, b, degrees)))
+        return math.radians(keys[-1][1])
+
+    return line
+
+
+def hair_cap(head, low, thick, top=lambda lon: math.radians(89), lon0=-180, lon1=180, nu=84, nv=16, fade=True, roll=0.0, grain=0.14):
+    """Pelo que nace en una línea continua y se apoya sobre el cráneo: no quedan bordes en escalera."""
+    a, b = math.radians(lon0), math.radians(lon1)
+
+    def place(lon, lat, off):
+        p = head_point(lon, lat)
+        n = outward(p)
+        return tuple(p[k] + n[k] * off for k in range(3))
+
+    def point(u, v):
+        lon = lerp(a, b, u)
+        lat = lerp(low(lon), top(lon), v)
+        return place(lon, lat, thick(lon, lat, v) * (smooth(0, 0.3, v) if fade else 1) + 0.0012)
+
+    def tint(p):
+        lon = math.atan2(p[0], p[2] - HEAD_CENTER[2])
+        strand = 0.5 * math.sin(lon * 41 + math.sin(p[1] * 18) * 1.6) + 0.5 * math.sin(lon * 97 + p[1] * 9)
+        return scale(WHITE, 1 + grain * strand)
+
+    head.grid(point, nu, nv, tint)
+    if roll:
+        # Remate redondeado que vuelve hacia el cuello: de abajo no se ve el interior.
+        def under(u, v):
+            lon = lerp(a, b, u)
+            angle = (1 - v) * math.pi * 0.75
+            lat = low(lon)
+            base = place(lon, lat, 0.0)
+            n = outward(base)
+            off = thick(lon, lat, 0) * 0.5 + 0.0012
+            return tuple(base[k] + n[k] * (off + off * math.cos(angle)) - (roll * math.sin(angle) if k == 1 else 0) for k in range(3))
+
+        head.grid(under, nu, 6, scale(WHITE, 0.86))
+
+
+def moustache(head, half, y_top, y_bottom, droop, bulk, split=0.0):
+    def point(u, v):
+        s = 2 * u - 1
+        x = s * half
+        # droop positivo cae en las puntas; negativo las levanta.
+        center = split * math.exp(-((s / 0.14) ** 2))
+        taper = 1 - s ** 4
+        mid = (y_top + y_bottom) / 2 - droop * s * s
+        half_height = (y_top - y_bottom) / 2 * taper * (1 - 0.8 * center / max(split, 0.001) if split else 1) + 0.0006
+        p = surface_at(x, mid + lerp(-half_height, half_height, v))
+        off = 0.0012 + bulk * math.sin(math.pi * v) ** 0.6 * taper
+        return (p[0], p[1], p[2] + off)
+
+    head.grid(point, 22, 5)
+
+
+def build_head():
+    head = Figure("cabeza")
+    head.use(Figure.SKIN, 0)
+    head.grid(head_grid, 42, 32, skin_tint)
+    for side in (-1, 1):
+        # Oreja: pabellón aplastado con el interior en sombra.
+        center = (side * 0.127, 0.002, -0.022)
+
+        def ear_tint(p, c=center):
+            return scale(WHITE, lerp(0.74, 1.0, smooth(0.1, 0.6, math.hypot((p[1] - c[1]) / 0.04, (p[2] - c[2]) / 0.026))))
+
+        head.ellipsoid(center, (0.015, 0.04, 0.026), ear_tint, segments=12, rings=9)
+
+    short_line = keyed((0, 38), (32, 33), (58, 18), (78, -6), (98, -8), (125, -22), (180, -30))
+
+    # 1. Raya al costado, peinado de oficina.
+    head.use(Figure.HAIR, 1)
+    part = math.radians(32)
+
+    def parted(lon, lat, v):
+        groove = 1 - 0.75 * math.exp(-(((lon - part) / 0.085) ** 2)) * smooth(0, 0.25, v)
+        volume = 0.016 + 0.009 * smooth(0.0, -1.2, lon - part) * smooth(0.0, 0.5, v)
+        return volume * groove
+
+    hair_cap(head, short_line, parted)
+    head.use(Figure.HAIR)
+    moustache(head, 0.05, -0.0605, -0.0675, -0.007, 0.0028, split=1.0)
+
+    # 2. A la gomina, tirante hacia atrás y con entradas.
+    head.use(Figure.HAIR, 2)
+    slick_line = keyed((0, 43), (14, 46), (34, 36), (58, 19), (78, -5), (98, -8), (125, -22), (180, -32))
+
+    def slick(lon, lat, v):
+        return 0.013 + 0.012 * smooth(0.0, 0.45, v) * smooth(math.pi, 0.2, abs(lon)) + 0.0014 * math.sin(lon * 34)
+
+    hair_cap(head, slick_line, slick, grain=0.22)
+
+    # 3. Sombrero de ala, el de los retratos de Gardel.
+    head.use(Figure.HAIR, 3)
+    under_hat = lambda lon: math.radians(42)
+    hair_cap(head, short_line, lambda lon, lat, v: 0.011, top=under_hat, nv=8)
+    head.use(Figure.ACCENT)
+
+    def hat(u, v):
+        # El perfil va del borde del ala a la copa; se recorre de afuera hacia arriba.
+        lon = 2 * math.pi * u
+        s, c = math.sin(lon), math.cos(lon)
+        profile = [(1.0, -0.004), (1.015, 0.002), (0.98, 0.007), (0.64, 0.009), (0.61, 0.05), (0.57, 0.135), (0.46, 0.158), (0.2, 0.152), (0.0, 0.14)]
+        t = v * (len(profile) - 1)
+        index = min(int(t), len(profile) - 2)
+        r = lerp(profile[index][0], profile[index + 1][0], t - index)
+        h = lerp(profile[index][1], profile[index + 1][1], t - index)
+        brim = smooth(0.64, 1.0, r)
+        crown = smooth(0.02, 0.12, h) * (1 - brim)
+        # El ala baja adelante y sube a los costados; la copa se aprieta arriba al frente y se hunde al medio.
+        y = 0.104 + h - 0.018 * brim * max(0.0, c) ** 2 + 0.014 * brim * s * s
+        y -= 0.022 * crown * math.exp(-((r * s / 0.16) ** 2)) * smooth(0.6, 0.2, r)
+        pinch = 1 - 0.2 * crown * max(0.0, c) ** 2
+        return (0.21 * r * s * pinch, y, -0.008 + 0.232 * r * c)
+
+    head.grid(hat, 32, 32, lambda p: scale(WHITE, 0.82 + 0.18 * smooth(0.11, 0.22, p[1])))
+    head.use(Figure.FIXED)
+
+    def band(u, v):
+        lon = 2 * math.pi * u
+        y = lerp(0.114, 0.146, v)
+        k = 0.21 * lerp(0.637, 0.618, v) + 0.0015
+        return (k * math.sin(lon), y, -0.008 + k * 1.105 * math.cos(lon))
+
+    head.grid(band, 28, 2, srgb(0x17110d))
+
+    # 4. Boina y bigote de almacenero.
+    head.use(Figure.HAIR, 4)
+    hair_cap(head, short_line, lambda lon, lat, v: 0.01, top=under_hat, nv=8)
+    moustache(head, 0.05, -0.055, -0.074, 0.008, 0.008)
+    head.use(Figure.ACCENT)
+
+    def beret(u, v):
+        lon = 2 * math.pi * u
+        s, c = math.sin(lon), math.cos(lon)
+        # Se desinfla hacia un costado, como se usa.
+        angle = v * math.pi * 0.5
+        outer = lerp(0.128, 0.178, smooth(0.0, 0.3, v)) * math.cos(angle * 0.92) ** 0.75
+        y = 0.106 + 0.082 * math.sin(angle) ** 0.85 - 0.016 * s * smooth(0.1, 0.5, v)
+        return (0.008 + outer * s, y, -0.012 + outer * 1.08 * c)
+
+    head.grid(beret, 30, 12, lambda p: scale(WHITE, 0.82 + 0.18 * smooth(0.11, 0.18, p[1])))
+    head.sweep([(0.012, 0.18, -0.012), (0.012, 0.205, -0.012)], [0.008, 0.006], segments=6, smooth_steps=1)
+
+    # 5. Melena corta a la mandíbula, redondeada y con el remate hacia adentro.
+    head.use(Figure.HAIR, 5)
+    bob_line = keyed((0, 40), (22, 37), (46, 24), (66, 0), (84, -36), (110, -44), (180, -46))
+
+    def bob(lon, lat, v):
+        return 0.021 + 0.022 * smooth(0.5, -0.7, lat)
+
+    hair_cap(head, bob_line, bob, fade=False, roll=0.012, grain=0.16)
+
+    # 6. Pelado con los costados canosos y anteojos redondos.
+    head.use(Figure.HAIR, 6)
+    ring_low = keyed((0, 8), (62, 8), (80, -8), (110, -14), (180, -26))
+    ring_top = keyed((0, 8), (62, 12), (80, 22), (112, 36), (180, 42))
+    hair_cap(head, ring_low, lambda lon, lat, v: 0.013, top=ring_top, lon0=-180, lon1=180, nv=8, grain=0.2)
+    head.use(Figure.FIXED)
+    GOLD = srgb(0xa98a4a)
+    for side in (-1, 1):
+        ring = []
+        for step in range(18):
+            angle = 2 * math.pi * step / 18
+            x, y = side * 0.053 + 0.03 * math.cos(angle), 0.018 + 0.027 * math.sin(angle)
+            p = surface_at(x, y)
+            ring.append((p[0], p[1], max(p[2], surface_at(side * 0.053, 0.03)[2]) + 0.012))
+        head.sweep(ring, [0.0026] * 18, GOLD, segments=5, smooth_steps=1, closed=True)
+        p = surface_at(side * 0.083, 0.02)
+        head.sweep([(p[0], p[1], p[2] + 0.012), (side * 0.128, 0.022, 0.05), (side * 0.134, 0.02, -0.02)], [0.0022] * 3, GOLD, segments=5, smooth_steps=3)
+    nose = surface_at(0, 0.024)
+    head.sweep([(-0.024, 0.024, nose[2] + 0.004), (0, 0.03, nose[2] + 0.006), (0.024, 0.024, nose[2] + 0.004)], [0.0024] * 3, GOLD, segments=5, smooth_steps=3)
+    return head
+
+
+def build_face():
+    """La parte de adelante de la cabeza, un pelito afuera, con UV para el dibujo de la cara."""
+    face = Figure("cara")
+    half = FACE_HALF
+
+    def write(corners):
+        verts = [face.bm.verts.new((c[0], -c[2], c[1])) for c in corners]
+        polygon = face.bm.faces.new(verts)
+        for loop, corner in zip(polygon.loops, corners):
+            # glTF invierte la v: al juego le llega con el 0 abajo, igual que los demás cuadros del atlas.
+            loop[face.uv].uv = (corner[0] / (2 * half) + 0.5, 1 - (corner[1] / (2 * half) + 0.5))
+            loop[face.color] = (1.0, 1.0, 1.0, 1.0)
+
+    nu, nv = 42, 32
+    lift = lambda p: (p[0], p[1], p[2] + 0.0014)
+    for j in range(nv):
+        for i in range(nu):
+            corners = [head_grid(i / nu, j / nv), head_grid((i + 1) / nu, j / nv), head_grid((i + 1) / nu, (j + 1) / nv), head_grid(i / nu, (j + 1) / nv)]
+            if all(abs(c[0]) < half and abs(c[1]) < half and c[2] > 0 for c in corners):
+                write([lift(c) for c in corners])
+    return face
+
+
+# ---- Cuerpo ----
+SHIRT = srgb(0xe4dccb)
 PANTS = srgb(0x2c2622)
 SHOE = srgb(0x1a120c)
-TIE = srgb(0x6e1f1a)
-HEAD_RADII = (0.165, 0.175, 0.165)
+TIE = srgb(0x5e1a18)
+INK = srgb(0x171310)
+PEARL = srgb(0xe9e0cf)
+BUTTON = srgb(0x2a201a)
+
+# (altura, ancho, profundidad, centro en z)
+MAN = [(0.44, 0.165, 0.116, -0.03), (0.6, 0.168, 0.114, -0.026), (0.74, 0.178, 0.12, -0.016), (0.85, 0.192, 0.128, -0.01), (0.93, 0.192, 0.112, -0.016), (0.975, 0.168, 0.09, -0.022), (1.022, 0.09, 0.07, -0.02), (1.05, 0.062, 0.06, -0.015)]
+WOMAN = [(0.44, 0.165, 0.118, -0.03), (0.6, 0.15, 0.108, -0.026), (0.74, 0.142, 0.1, -0.018), (0.85, 0.168, 0.124, -0.006), (0.93, 0.172, 0.104, -0.014), (0.975, 0.146, 0.08, -0.022), (1.022, 0.074, 0.062, -0.02), (1.05, 0.05, 0.05, -0.015)]
+
+
+def profile(table, y):
+    y = max(table[0][0], min(table[-1][0], y))
+    for a, b in zip(table, table[1:]):
+        if y <= b[0]:
+            t = smooth(a[0], b[0], y)
+            return tuple(lerp(a[k], b[k], t) for k in (1, 2, 3))
+    return table[-1][1:]
+
+
+def front(table, x, y, off=0.0):
+    """Punto del frente del torso, para apoyar encima la ropa."""
+    rx, rz, cz = profile(table, y)
+    s = min(0.995, abs(x) / rx)
+    return (x, y, cz + rz * math.sqrt(1 - s * s) + off)
+
+
+def front_patch(body, table, y0, y1, left, right, off, tint=WHITE, rows=8, cols=4):
+    def point(u, v):
+        y = lerp(y0, y1, v)
+        return front(table, lerp(left(y), right(y), u), y, off)
+
+    body.grid(point, cols, rows, tint)
+
+
+def torso_shade(p):
+    # Sombra suave de la mesa abajo y de la cabeza bajo el mentón.
+    amount = 0.7 + 0.3 * smooth(0.72, 0.86, p[1])
+    amount *= 1 - 0.3 * smooth(0.96, 1.04, p[1]) * smooth(0.0, 0.05, p[2])
+    return scale(WHITE, amount)
+
+
+def torso(body, table, tint):
+    y0, y1 = table[0][0], table[-1][0]
+
+    def point(u, v):
+        angle = 2 * math.pi * u
+        y = lerp(y0, y1, v)
+        rx, rz, cz = profile(table, y)
+        # Un poco adentro: la prenda de encima no deja asomar el torso en las curvas.
+        return ((rx - 0.005) * math.sin(angle), y, cz + (rz - 0.005) * math.cos(angle))
+
+    body.grid(point, 28, 20, tint)
+
+
+def garment(body, table, y0, y1, opening, armhole=None, off=0.004):
+    """Prenda sobre el torso. opening da el medio ancho del escote en cada altura y armhole cuánto rodea
+    el hombro: el borde sigue la superficie, por eso sale limpio en vez de escalonado."""
+    reach = armhole or (lambda y: math.pi / 2)
+
+    def place(angle, y):
+        rx, rz, cz = profile(table, y)
+        return ((rx + off) * math.sin(angle), y, cz + (rz + off) * math.cos(angle))
+
+    def open_angle(y):
+        return math.asin(min(0.98, opening(y) / profile(table, y)[0]))
+
+    def front_right(u, v):
+        y = lerp(y0, y1, v)
+        return place(lerp(open_angle(y), reach(y), u), y)
+
+    def front_left(u, v):
+        y = lerp(y0, y1, v)
+        return place(-lerp(reach(y), open_angle(y), u), y)
+
+    def back(u, v):
+        y = lerp(y0, y1, v)
+        a = reach(y)
+        # Dos paños: del hombro derecho al centro y del centro al hombro izquierdo.
+        return place(lerp(math.pi - a, math.pi + a, u), y)
+
+    body.grid(front_right, 10, 24, torso_shade)
+    body.grid(front_left, 10, 24, torso_shade)
+    body.grid(back, 20, 24, torso_shade)
+
+
+def neck(body, radius):
+    body.use(Figure.SKIN)
+    # Sube hasta adentro de la cabeza; la parte alta queda en la sombra del mentón.
+    body.sweep([(0, 1.0, -0.016), (0, 1.1, -0.014), (0, 1.17, -0.012)], [radius * 1.28, radius, radius * 0.98], lambda p: scale(WHITE, 0.66 + 0.14 * smooth(1.02, 1.04, p[1])), segments=14, smooth_steps=2)
+
+
+def shirt_collar(body, table, tint=SHIRT):
+    body.use(Figure.FIXED)
+    body.sweep([(0, 1.0, -0.017), (0, 1.058, -0.016)], [0.076, 0.069], tint, segments=16, smooth_steps=2)
+    for side in (-1, 1):
+        a = (side * 0.008, 1.06, 0.052)
+        b = (side * 0.066, 1.06, 0.012)
+        c = front(table, side * 0.072, 0.982, 0.013)
+        d = front(table, side * 0.02, 0.982, 0.017)
+        shadow = tuple(p + (0, -0.006, -0.003)[k] for k, p in enumerate(c)), tuple(p + (0, -0.006, -0.003)[k] for k, p in enumerate(d))
+        def wing(q, off=0.0):
+            return lambda u, v: tuple(lerp(lerp(q[3][k], q[2][k], u), lerp(q[0][k], q[1][k], u), v) + (off if k == 2 else 0) for k in range(3))
+
+        order = (a, b, c, d) if side > 0 else (b, a, d, c)
+        low = (a, b, shadow[0], shadow[1]) if side > 0 else (b, a, shadow[1], shadow[0])
+        body.grid(wing(low, -0.003), 3, 3, scale(tint, 0.62))
+        body.grid(wing(order), 3, 3, tint)
+
+
+def necktie(body, table, y_low, color=TIE):
+    body.use(Figure.FIXED)
+    width = lambda y: lerp(0.024, 0.014, smooth(y_low, 0.975, y))
+    front_patch(body, table, y_low, 0.975, lambda y: -width(y), lambda y: width(y), 0.006, color, rows=6, cols=2)
+    # Nudo: más ancho arriba, con volumen y un poco más oscuro en los bordes.
+    knot_width = lambda y: lerp(0.012, 0.021, smooth(0.962, 0.992, y))
+
+    def knot(u, v):
+        y = lerp(0.962, 0.994, v)
+        x = lerp(-knot_width(y), knot_width(y), u)
+        return front(table, x, y, 0.009 + 0.007 * math.sin(math.pi * u) * math.sin(math.pi * v) ** 0.5)
+
+    body.grid(knot, 6, 4, scale(color, 1.12))
+
+
+def bow_tie(body, table, color=INK):
+    body.use(Figure.FIXED)
+    center = front(table, 0, 0.995, 0.018)
+    for side in (-1, 1):
+        body.ellipsoid((side * 0.033, center[1], center[2]), (0.03, 0.021, 0.009), color, segments=10, rings=6)
+    body.ellipsoid(center, (0.011, 0.012, 0.012), color, segments=8, rings=5)
+
+
+def buttons(body, table, ys, x=0.0, color=BUTTON):
+    body.use(Figure.FIXED)
+    for y in ys:
+        body.ellipsoid(front(table, x, y, 0.006), (0.0075, 0.0075, 0.004), color, segments=8, rings=4)
+
+
+def arm_path(side, table_scale=1.0):
+    shoulder = (side * 0.192 * table_scale, 0.925, -0.024)
+    return [
+        shoulder,
+        (side * lerp(0.192 * table_scale, 0.238, 0.6), 0.82, -0.004),
+        (side * 0.238, 0.725, 0.05),
+        (side * 0.222, 0.71, 0.115),
+        (side * 0.178, 0.765, 0.235),
+        (side * 0.122, 0.84, 0.335),
+        (side * 0.108, 0.852, 0.362),
+    ]
+
+
+ARM_RADII = [0.058, 0.054, 0.048, 0.045, 0.04, 0.034, 0.031]
+
+
+def arm(body, side, tint=WHITE, table_scale=1.0, shrink=1.0):
+    path = arm_path(side, table_scale)
+    radii = [r * shrink for r in ARM_RADII]
+    root = (path[0][0] - side * 0.05, path[0][1] + 0.022, path[0][2])
+    body.sweep([root, *path], [radii[0] * 0.8, *radii], tint, segments=16, smooth_steps=3)
+
+
+def cuff(body, side, tint=SHIRT, shrink=1.0):
+    path = arm_path(side)
+    start, end = path[-2], path[-1]
+    along = lambda t: tuple(lerp(start[k], end[k], t) for k in range(3))
+    body.use(Figure.FIXED)
+    body.sweep([along(-0.45), along(0.6)], [0.0425 * shrink, 0.0395 * shrink], tint, segments=16, smooth_steps=1)
+
+
+def hand(body, side):
+    """Mano cerrada sobre el borde de las cartas; sale de la manga sin dejar espacio."""
+    body.use(Figure.SKIN, 0)
+    wrist = (side * 0.112, 0.849, 0.352)
+    palm = (side * 0.1, 0.862, 0.392)
+    body.sweep([wrist, palm], [0.028, 0.034], segments=10, smooth_steps=2)
+    body.ellipsoid(palm, (0.04, 0.034, 0.042), segments=12, rings=8)
+    # Cuatro dedos que suben por detrás de las cartas, todos nacidos adentro de la palma.
+    for finger in range(4):
+        x = side * lerp(0.13, 0.078, finger / 3)
+        tall = 0.012 * math.sin(math.pi * (finger + 0.6) / 4)
+        body.sweep(
+            [(x, 0.872, 0.402), (x, 0.884 + tall, 0.418), (x * 0.99, 0.896 + tall, 0.414), (x * 0.98, 0.901 + tall, 0.401)],
+            [0.0115, 0.0108, 0.0098, 0.0085],
+            segments=7,
+            smooth_steps=2,
+        )
+        body.ellipsoid((x * 0.98, 0.901 + tall, 0.401), (0.0085,) * 3, segments=7, rings=4)
+    # Pulgar del lado de quien juega.
+    thumb_tip = (side * 0.05, 0.904, 0.378)
+    body.sweep([(side * 0.085, 0.872, 0.378), (side * 0.066, 0.888, 0.372), thumb_tip], [0.014, 0.0125, 0.0105], segments=7, smooth_steps=3)
+    body.ellipsoid(thumb_tip, (0.0105,) * 3, segments=7, rings=4)
+
+
+def lapels(body, table, y_low, opening, tint):
+    """Solapas con muesca, apoyadas sobre el saco."""
+    for side in (-1, 1):
+        inner = lambda y, s=side: s * opening(y)
+
+        def outer(y, s=side):
+            width = lerp(0.02, 0.062, smooth(y_low, 0.93, y))
+            notch = 0.022 * bell(y, 0, 0.955, 0, 0.012, 1)
+            return s * (opening(y) + width - notch)
+
+        left, right = (outer, inner) if side < 0 else (inner, outer)
+        front_patch(body, table, y_low, 1.0, left, right, 0.007, tint, rows=12, cols=2)
 
 
 def build_body():
     body = Figure("cuerpo")
     # Piernas sentadas: casi no se ven, pero evitan que parezca un busto flotando.
-    body.use(Figure.FIXED)
     for side in (-1, 1):
-        body.limb((side * 0.09, 0.5, -0.02), (side * 0.1, 0.5, 0.36), 0.075, 0.06, PANTS)
-        body.limb((side * 0.1, 0.5, 0.36), (side * 0.1, 0.08, 0.36), 0.058, 0.045, PANTS)
-        body.box((side * 0.1, 0.04, 0.41), (0.09, 0.07, 0.2), tint=SHOE)
+        body.use(Figure.FIXED, 0)
+        body.sweep([(side * 0.09, 0.5, -0.02), (side * 0.1, 0.5, 0.36), (side * 0.1, 0.08, 0.36)], [0.078, 0.064, 0.046], PANTS, segments=8, smooth_steps=2)
+        body.ellipsoid((side * 0.1, 0.045, 0.41), (0.05, 0.04, 0.105), SHOE, segments=8, rings=5)
+        hand(body, side)
 
-    # Chaleco del color del equipo, con la camisa a la vista.
-    body.use(Figure.CLOTH)
-    body.tube(
-        [
-            (0.17, 0.12, 0.46, -0.02),
-            (0.19, 0.125, 0.56, -0.02),
-            (0.195, 0.125, 0.74, -0.02),
-            (0.215, 0.12, 0.92, -0.02),
-            (0.15, 0.09, 1.0, -0.02),
-            (0.07, 0.06, 1.03, -0.02),
-        ],
-        tint=WHITE,
-        segments=12,
-    )
-    body.use(Figure.FIXED)
-    # Pechera y corbata sobre el chaleco, de frente.
-    front = 0.108
-    body.quad((-0.055, 0.68, front), (0.055, 0.68, front), (0.075, 1.0, 0.06), (-0.075, 1.0, 0.06), tint=SHIRT)
-    body.quad((-0.018, 0.74, front + 0.004), (0.018, 0.74, front + 0.004), (0.022, 0.98, 0.066), (-0.022, 0.98, 0.066), tint=TIE)
-    # Cuello de camisa y cuello de la persona.
-    body.tube([(0.076, 0.076, 1.0, -0.01), (0.07, 0.07, 1.055, -0.01)], tint=SHIRT, segments=10)
-    body.use(Figure.SKIN)
-    body.tube([(0.058, 0.058, 1.05, -0.01), (0.056, 0.056, 1.12, -0.01)], segments=8)
+    def shirt_base(variant):
+        # Debajo siempre está la camisa: la ropa de encima se recorta con bordes limpios.
+        body.use(Figure.FIXED, variant)
+        torso(body, MAN, lambda p: tuple(a * b for a, b in zip(torso_shade(p), SHIRT)))
 
-    # Brazos con las manos delante de la cara, donde el juego pone las cartas.
-    for side in (-1, 1):
-        shoulder = (side * 0.215, 0.95, -0.02)
-        elbow = (side * 0.28, 0.72, 0.09)
-        wrist = (side * 0.12, 0.845, 0.33)
-        hand = (side * 0.088, 0.862, 0.392)
+    def shirt_sleeves():
         body.use(Figure.FIXED)
-        body.limb(shoulder, elbow, 0.06, 0.048, SHIRT, segments=8)
-        body.limb(elbow, wrist, 0.046, 0.032, SHIRT, segments=8)
+        for side in (-1, 1):
+            arm(body, side, SHIRT)
+            cuff(body, side, scale(SHIRT, 1.02))
+
+    def coat_sleeves():
+        for side in (-1, 1):
+            body.use(Figure.CLOTH)
+            arm(body, side, shrink=1.04)
+            cuff(body, side)
+
+    vee = lambda low, width: (lambda y: lerp(0.0, width, smooth(low, 1.0, y)))
+    armhole = lambda y: lerp(math.pi / 2, 0.82, smooth(0.8, 0.965, y))
+
+    # 1. Chaleco abotonado, camisa y corbata.
+    shirt_base(1)
+    body.use(Figure.CLOTH)
+    garment(body, MAN, 0.44, 0.985, vee(0.83, 0.085), armhole)
+    necktie(body, MAN, 0.82)
+    shirt_collar(body, MAN)
+    neck(body, 0.056)
+    buttons(body, MAN, (0.815, 0.775))
+    shirt_sleeves()
+
+    # 2 y 3. Saco con solapas; el 3 lleva lengue blanco en vez de corbata.
+    for variant in (2, 3):
+        shirt_base(variant)
+        body.use(Figure.CLOTH)
+        opening = vee(0.8, 0.072)
+        garment(body, MAN, 0.44, 1.02, opening)
+        lapels(body, MAN, 0.8, opening, scale(WHITE, 0.74))
+        if variant == 2:
+            necktie(body, MAN, 0.79, INK)
+            shirt_collar(body, MAN)
+            # Pañuelo en el bolsillo.
+            body.use(Figure.FIXED)
+            front_patch(body, MAN, 0.872, 0.902, lambda y: 0.118, lambda y: 0.16 - 0.5 * (y - 0.872), 0.008, SHIRT, rows=3, cols=3)
+        else:
+            silk = srgb(0xf1ece0)
+            body.use(Figure.FIXED)
+            body.sweep([(0, 1.0, -0.016), (0, 1.03, -0.016)], [0.08, 0.074], silk, segments=14, smooth_steps=2)
+            # Dos paños cruzados que cierran el escote, con el de arriba apenas más claro.
+            drape = lambda y: smooth(0.8, 1.0, y)
+            front_patch(body, MAN, 0.81, 1.0, lambda y: -0.07 * drape(y) - 0.002, lambda y: 0.01 + 0.012 * drape(y), 0.006, scale(silk, 0.86), rows=8, cols=3)
+            front_patch(body, MAN, 0.82, 1.0, lambda y: -0.012 - 0.008 * drape(y), lambda y: 0.066 * drape(y) + 0.004, 0.009, silk, rows=8, cols=3)
+        neck(body, 0.056)
+        buttons(body, MAN, (0.775,), 0.012)
+        coat_sleeves()
+
+    # 4. Pulóver en V con la camisa asomando.
+    shirt_base(4)
+    v_open = vee(0.885, 0.062)
+    body.use(Figure.CLOTH)
+    garment(body, MAN, 0.44, 1.01, v_open)
+    necktie(body, MAN, 0.88, srgb(0x3b2f24))
+    shirt_collar(body, MAN)
+    body.use(Figure.CLOTH)
+    for side in (-1, 1):
+        inner = lambda y, s=side: s * v_open(y)
+        outer = lambda y, s=side: s * (v_open(y) + 0.003 + 0.015 * smooth(0.885, 0.92, y))
+        left, right = (outer, inner) if side < 0 else (inner, outer)
+        front_patch(body, MAN, 0.885, 1.0, left, right, 0.007, scale(WHITE, 0.76), rows=6, cols=1)
+    neck(body, 0.057)
+    coat_sleeves()
+
+    # 5. Vestido con escote en V, collar de perlas y brazos descubiertos.
+    body.use(Figure.SKIN, 5)
+    torso(body, WOMAN, torso_shade)
+    body.use(Figure.CLOTH)
+    garment(body, WOMAN, 0.44, 1.0, vee(0.9, 0.074))
+    body.use(Figure.ACCENT)
+    front_patch(body, WOMAN, 0.752, 0.776, lambda y: -0.135, lambda y: 0.135, 0.007, rows=2, cols=10)
+    neck(body, 0.047)
+    body.use(Figure.FIXED)
+    for step in range(13):
+        t = step / 12 * 2 - 1
+        y = 1.012 - 0.052 * (1 - t * t)
+        p = front(WOMAN, t * 0.066, y, 0.008)
+        body.ellipsoid(p, (0.0072,) * 3, PEARL, segments=7, rings=5)
+    for side in (-1, 1):
         body.use(Figure.SKIN)
-        body.ellipsoid(hand, (0.045, 0.036, 0.03), segments=8, rings=5)
-        # Pulgar y dedos abrazando el canto de las cartas.
-        body.limb((side * 0.058, 0.864, 0.378), (side * 0.03, 0.872, 0.372), 0.012, 0.01, segments=5)
-        for finger in range(3):
-            y = 0.85 + finger * 0.016
-            body.limb((side * 0.122, y, 0.39), (side * 0.128, y + 0.004, 0.36), 0.01, 0.009, segments=4)
+        arm(body, side, table_scale=0.84, shrink=0.86)
+        path = arm_path(side, 0.84)
+        body.use(Figure.CLOTH)
+        root = (path[0][0] - side * 0.05, path[0][1] + 0.022, path[0][2])
+        body.sweep([root, *path[:2]], [0.046, 0.056, 0.052], segments=16, smooth_steps=3)
+
+    # 6. Mozo: chaleco, moño y ligas en las mangas.
+    shirt_base(6)
+    body.use(Figure.CLOTH)
+    garment(body, MAN, 0.44, 0.985, vee(0.83, 0.1), armhole)
+    bow_tie(body, MAN)
+    shirt_collar(body, MAN)
+    neck(body, 0.057)
+    buttons(body, MAN, (0.815, 0.775), 0.0, srgb(0xc9a557))
+    shirt_sleeves()
+    body.use(Figure.ACCENT)
+    for side in (-1, 1):
+        path = arm_path(side)
+        a, b = path[1], path[2]
+        ring = [tuple(lerp(a[k], b[k], t) for k in range(3)) for t in (0.25, 0.45)]
+        body.sweep(ring, [0.0545, 0.0535], segments=12, smooth_steps=1)
     return body
 
-
-def build_head():
-    # El centro de la cabeza es el ojo de la cámara. Adelante es +z.
-    head = Figure("cabeza")
-    head.use(Figure.SKIN, 0)
-    head.ellipsoid((0, 0, 0), HEAD_RADII, segments=16, rings=12)
-    for side in (-1, 1):
-        head.ellipsoid((side * 0.165, 0.0, -0.005), (0.018, 0.04, 0.03), segments=6, rings=4)
-
-    shell = (0.178, 0.188, 0.178)
-
-    head.use(Figure.HAIR, 1)  # Corto, con raya.
-    head.ellipsoid((0, 0.005, -0.004), shell, keep=lambda x, y, z: y > 0.1 or (z < -0.012 and y > -0.07), segments=16, rings=12)
-
-    head.use(Figure.HAIR, 2)  # A la gomina, alto y para atrás.
-    head.ellipsoid((0, 0.012, -0.012), (0.176, 0.2, 0.2), keep=lambda x, y, z: y > 0.11 or (z < -0.03 and y > -0.04), segments=16, rings=12)
-
-    head.use(Figure.HAIR, 3)  # Sombrero de ala, el de los retratos de Gardel.
-    head.lathe((0, 0, 0), [(0.285, 0.122), (0.285, 0.133), (0.175, 0.14), (0.165, 0.26), (0.115, 0.29), (0, 0.288)], segments=14)
-    head.use(Figure.FIXED, 3)
-    head.lathe((0, 0, 0), [(0.178, 0.14), (0.171, 0.185)], segments=14, tint=srgb(0x14100c))
-
-    head.use(Figure.HAIR, 4)  # Boina.
-    head.ellipsoid((0.015, 0.145, -0.01), (0.215, 0.07, 0.215), keep=lambda x, y, z: y > 0.112, segments=14, rings=8)
-    head.limb((0.015, 0.21, -0.01), (0.015, 0.25, -0.01), 0.012, 0.008, segments=5)
-
-    head.use(Figure.HAIR, 5)  # Melena hasta los hombros.
-    head.ellipsoid((0, 0.0, -0.012), (0.186, 0.25, 0.186), keep=lambda x, y, z: y > 0.1 or (z < 0.015 and y > -0.2), segments=16, rings=12)
-
-    head.use(Figure.HAIR, 6)  # Pelado con los costados canosos.
-    head.ellipsoid((0, 0, -0.004), (0.174, 0.182, 0.174), keep=lambda x, y, z: z < 0.02 and -0.07 < y < 0.075, segments=16, rings=12)
-    return head
 
 for item in list(bpy.data.objects):
     bpy.data.objects.remove(item)
@@ -824,6 +1399,7 @@ build_table().finish()
 build_chair().finish()
 build_body().finish()
 build_head().finish()
+build_face().finish()
 bpy.context.view_layer.update()
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
