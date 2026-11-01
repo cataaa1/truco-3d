@@ -32,6 +32,7 @@ import type { PlayerView } from '../../engine/game';
 import { MAX_PITCH, MAX_YAW, MIN_PITCH } from '../../shared/protocol';
 import { BACK_SLOT, buildCardAtlas, buildFaceAtlas, CARD_GRID, FACE_GRID, NEUTRAL_FACE } from './atlas';
 import { appearanceFor, characterMaterial, faceMaterial, setCharacterInstances, smoothNormals } from './characters';
+import { PLAYED_H, PLAYED_W, playedCard, tableSize } from './layout';
 import cardArtUrl from './assets/cartas.webp?url';
 
 // El mazo empieza a bajar apenas carga este módulo, que se pide desde la pantalla de inicio.
@@ -44,11 +45,16 @@ const EYE_HEIGHT = 1.22;
 const TABLE_Y = 0.74;
 const HEAD_RADIUS = 0.17;
 const FOV = 55;
-const PLAYED_W = 0.15;
-const PLAYED_H = 0.234;
-const PLAYED_SPACING = 0.158;
-const PLAYED_PULL = 0.13;
 const FACE_SIZE = 0.3;
+// Las cartas en la mano: entre los dedos, con las muñecas apoyadas en el borde de la mesa.
+const HELD_W = 0.085;
+const HELD_H = 0.132;
+const HELD_FORWARD = 0.47;
+const HELD_DROP = 0.36;
+const HELD_SPACING = 0.09;
+// La cabeza gira desde el cuello y baja hasta cierto punto: los ojos siguen más abajo que la nariz.
+const NECK_LENGTH = 0.13;
+const MAX_NOD = 0.55;
 const HEAD_SHAPE = { x: 0.165, y: 0.175, z: 0.165 };
 const TAG_HEIGHT = 0.36;
 
@@ -139,7 +145,6 @@ export class TableScene {
   private readonly scene = new Scene();
   private readonly camera: PerspectiveCamera;
   private readonly seatRadius: number;
-  private readonly cardSpot: number;
   private readonly cards;
   private readonly faces;
   private readonly tags;
@@ -173,9 +178,8 @@ export class TableScene {
     canvas.addEventListener('webglcontextlost', (event) => event.preventDefault());
     canvas.addEventListener('webglcontextrestored', () => this.invalidate());
 
-    this.seatRadius = players === 6 ? 1.4 : 1.2;
-    const tableRadius = this.seatRadius - 0.34;
-    this.cardSpot = tableRadius * 0.52;
+    const { seatRadius, tableRadius } = tableSize(players);
+    this.seatRadius = seatRadius;
 
     this.camera = new PerspectiveCamera(FOV, 1, 0.05, 30);
     this.camera.rotation.order = 'YXZ';
@@ -471,46 +475,31 @@ export class TableScene {
     this.invalidate();
   }
 
-  /** Dónde está la mano de un asiento, frente a sus ojos y más abajo. */
+  /** Dónde está la mano de un asiento: entre sus dedos, frente a sus ojos y más abajo. */
   private handPlacement(seat: number, index: number, count: number, out: Object3D, lift = 0): void {
     const eye = this.seatPosition(seat);
     const angle = this.seatAngle(seat);
     const forward = new Vector3(-Math.sin(angle), 0, -Math.cos(angle));
     const right = new Vector3(Math.cos(angle), 0, -Math.sin(angle));
     const offset = index - (count - 1) / 2;
+    // Con dos cartas se abren más, para que cada una siga agarrada por su mano.
+    const spacing = count === 2 ? HELD_SPACING * 1.25 : HELD_SPACING;
     out.position
       .copy(eye)
-      .addScaledVector(forward, 0.36)
-      .addScaledVector(right, offset * 0.076);
-    out.position.y += -0.28 - Math.abs(offset) * 0.004 + lift;
+      .addScaledVector(forward, HELD_FORWARD)
+      .addScaledVector(right, offset * spacing);
+    out.position.y += -HELD_DROP - Math.abs(offset) * 0.004 + lift;
     out.lookAt(eye);
     out.rotateZ(-offset * 0.06);
   }
 
-  /** Las cartas lejanas se dibujan más grandes para que se lean igual que las cercanas. */
-  private playedScale(seat: number): number {
-    if (seat === this.me) return 1;
-    const angle = this.seatAngle(seat);
-    const distance = Math.hypot(Math.sin(angle) * this.cardSpot, this.seatRadius - Math.cos(angle) * this.cardSpot);
-    return 1 + Math.min(0.2, Math.max(0, (distance - 0.9) * 0.28));
-  }
-
-  private tablePlacement(seat: number, round: number, out: Object3D): void {
-    const angle = this.seatAngle(seat);
-    // Mis cartas jugadas van más al centro: en el lugar de los demás las taparía mi propia mano.
-    const spot = seat === this.me ? this.seatRadius - 1.12 : this.cardSpot;
-    const spacing = PLAYED_SPACING * this.playedScale(seat);
-    // Apoyadas sobre la mesa, de frente a quien mira y un poco más cerca para que se lean.
-    const pull = seat === this.me ? 0 : PLAYED_PULL;
-    const centerX = Math.sin(angle) * spot;
-    const centerZ = Math.cos(angle) * spot + pull;
-    const dx = -centerX;
-    const dz = this.seatRadius - centerZ;
-    const distance = Math.hypot(dx, dz);
-    const offset = (round - 1) * spacing;
-    out.position.set(centerX + (offset * dz) / distance, TABLE_Y + 0.003 + round * 0.001, centerZ - (offset * dx) / distance);
+  private tablePlacement(seat: number, round: number, out: Object3D): { scale: number } {
+    const slot = (seat - this.me + this.players) % this.players;
+    const card = playedCard(this.players, slot, round);
+    out.position.set(card.x, TABLE_Y + card.y, card.z);
     out.rotation.order = 'YXZ';
-    out.rotation.set(-Math.PI / 2, Math.atan2(dx, dz), 0);
+    out.rotation.set(-Math.PI / 2, card.yaw, 0);
+    return card;
   }
 
   private putSprite(key: string, slot: number, placed: Object3D, scaleX: number, scaleY: number, from?: Object3D): void {
@@ -540,16 +529,13 @@ export class TableScene {
     const seen = new Set<string>();
     const place = new Object3D();
     const from = new Object3D();
-    const handW = 0.07;
-    const handH = 0.109;
 
     view.rounds.forEach((round, roundIndex) => {
       for (const { seat, card } of round) {
         const key = `t${card}`;
         seen.add(key);
-        this.tablePlacement(seat, roundIndex, place);
+        const { scale } = this.tablePlacement(seat, roundIndex, place);
         this.handPlacement(seat, 1, 3, from);
-        const scale = this.playedScale(seat);
         this.putSprite(key, card, place, PLAYED_W * scale, PLAYED_H * scale, from);
       }
     });
@@ -561,7 +547,7 @@ export class TableScene {
         const key = `o${seat}:${i}:${count}`;
         seen.add(key);
         this.handPlacement(seat, i, count, place);
-        this.putSprite(key, BACK_SLOT, place, handW, handH);
+        this.putSprite(key, BACK_SLOT, place, HELD_W, HELD_H);
       }
     }
 
@@ -569,7 +555,7 @@ export class TableScene {
       const key = `h${card}`;
       seen.add(key);
       this.handPlacement(this.me, i, view.myCards.length, place, this.hovered === i ? 0.022 : 0);
-      this.putSprite(key, card, place, handW, handH);
+      this.putSprite(key, card, place, HELD_W, HELD_H);
     });
 
     for (const key of this.sprites.keys()) if (!seen.has(key)) this.sprites.delete(key);
@@ -621,9 +607,14 @@ export class TableScene {
     this.otherSeats().forEach((seat, index) => {
       const head = this.heads[seat]!;
       const pos = this.seatPosition(seat);
-      helper.position.copy(pos);
+      // Mirar abajo se ve hasta cierto punto; el resto del recorrido queda solo en la dirección de la mirada.
+      const nod = head.pitch >= 0 ? head.pitch : -MAX_NOD * (1 - Math.exp(head.pitch / MAX_NOD));
       helper.rotation.order = 'YXZ';
-      helper.rotation.set(-head.pitch, this.seatAngle(seat) + Math.PI - head.yaw, 0);
+      helper.rotation.set(-nod, this.seatAngle(seat) + Math.PI - head.yaw, 0);
+      helper.position.set(0, NECK_LENGTH, 0).applyEuler(helper.rotation);
+      helper.position.x += pos.x;
+      helper.position.y += pos.y - NECK_LENGTH;
+      helper.position.z += pos.z;
       helper.scale.set(1, 1, 1);
       helper.updateMatrix();
       this.headMesh.setMatrixAt(index, helper.matrix);

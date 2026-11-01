@@ -1203,15 +1203,16 @@ def buttons(body, table, ys, x=0.0, color=BUTTON):
 
 
 def arm_path(side, table_scale=1.0):
+    # El antebrazo descansa sobre el borde de la mesa, y la muñeca queda apoyada sobre el paño.
     shoulder = (side * 0.192 * table_scale, 0.925, -0.024)
     return [
         shoulder,
-        (side * lerp(0.192 * table_scale, 0.238, 0.6), 0.82, -0.004),
-        (side * 0.238, 0.725, 0.05),
-        (side * 0.222, 0.71, 0.115),
-        (side * 0.178, 0.765, 0.235),
-        (side * 0.122, 0.84, 0.335),
-        (side * 0.108, 0.852, 0.362),
+        (side * lerp(0.192 * table_scale, 0.248, 0.6), 0.825, -0.008),
+        (side * 0.262, 0.752, 0.075),
+        (side * 0.248, 0.754, 0.15),
+        (side * 0.2, 0.772, 0.262),
+        (side * 0.152, 0.779, 0.372),
+        (side * 0.138, 0.78, 0.402),
     ]
 
 
@@ -1233,28 +1234,51 @@ def cuff(body, side, tint=SHIRT, shrink=1.0):
     body.sweep([along(-0.45), along(0.6)], [0.0425 * shrink, 0.0395 * shrink], tint, segments=16, smooth_steps=1)
 
 
+HAND_CREASE = (0.86, 0.76, 0.72)
+
+
+def finger(body, joints, radii, segments=9):
+    """Dedo de tres falanges con la punta redonda y un pliegue apenas más oscuro en cada nudillo."""
+    tips = len(joints) - 1
+
+    def tint(p):
+        near = min(math.dist(p, joint) for joint in joints[1:tips])
+        return mix(HAND_CREASE, WHITE, smooth(0.003, 0.009, near))
+
+    body.sweep(joints, radii, tint, segments=segments, smooth_steps=3)
+    body.ellipsoid(joints[-1], (radii[-1],) * 3, segments=segments, rings=5)
+
+
 def hand(body, side):
-    """Mano cerrada sobre el borde de las cartas; sale de la manga sin dejar espacio."""
+    """Mano que sostiene las cartas por abajo: el pulgar por delante y los otros cuatro dedos por detrás."""
     body.use(Figure.SKIN, 0)
-    wrist = (side * 0.112, 0.849, 0.352)
-    palm = (side * 0.1, 0.862, 0.392)
-    body.sweep([wrist, palm], [0.028, 0.034], segments=10, smooth_steps=2)
-    body.ellipsoid(palm, (0.04, 0.034, 0.042), segments=12, rings=8)
-    # Cuatro dedos que suben por detrás de las cartas, todos nacidos adentro de la palma.
-    for finger in range(4):
-        x = side * lerp(0.13, 0.078, finger / 3)
-        tall = 0.012 * math.sin(math.pi * (finger + 0.6) / 4)
-        body.sweep(
-            [(x, 0.872, 0.402), (x, 0.884 + tall, 0.418), (x * 0.99, 0.896 + tall, 0.414), (x * 0.98, 0.901 + tall, 0.401)],
-            [0.0115, 0.0108, 0.0098, 0.0085],
-            segments=7,
-            smooth_steps=2,
-        )
-        body.ellipsoid((x * 0.98, 0.901 + tall, 0.401), (0.0085,) * 3, segments=7, rings=4)
-    # Pulgar del lado de quien juega.
-    thumb_tip = (side * 0.05, 0.904, 0.378)
-    body.sweep([(side * 0.085, 0.872, 0.378), (side * 0.066, 0.888, 0.372), thumb_tip], [0.014, 0.0125, 0.0105], segments=7, smooth_steps=3)
-    body.ellipsoid(thumb_tip, (0.0105,) * 3, segments=7, rings=4)
+    # La muñeca nace bien adentro de la manga y se abre rápido, para que el corte quede limpio.
+    wrist = (side * 0.142, 0.778, 0.392)
+    heel = (side * 0.128, 0.786, 0.424)
+    middle = (side * 0.112, 0.806, 0.452)
+    knuckles = (side * 0.098, 0.83, 0.474)
+    body.sweep([wrist, heel, middle, knuckles], [0.016, 0.03, 0.036, 0.03], segments=14, smooth_steps=4, flat=0.68)
+
+    # Los cuatro dedos suben por detrás de las cartas, de afuera hacia adentro.
+    for index, (x, length) in enumerate(((0.128, 0.84), (0.11, 1.0), (0.09, 1.06), (0.07, 0.96))):
+        x *= side
+        base_y = 0.826 + 0.003 * index
+        base_z = 0.482
+        joints = [
+            (x, base_y - 0.012, base_z - 0.012),
+            (x, base_y + 0.012 * length, base_z + 0.012),
+            (x * 0.99, base_y + 0.03 * length, base_z + 0.024),
+            (x * 0.98, base_y + 0.044 * length, base_z + 0.026),
+        ]
+        finger(body, joints, [0.0125, 0.0116, 0.0102, 0.0088])
+
+    # Pulgar por delante de las cartas, apoyado sobre el borde de abajo.
+    base = (side * 0.112, 0.79, 0.424)
+    joints = [base, (side * 0.09, 0.799, 0.414), (side * 0.069, 0.811, 0.416), (side * 0.051, 0.823, 0.424)]
+    finger(body, joints, [0.0175, 0.0145, 0.0122, 0.0102])
+    # Uña del pulgar, lo único que queda bien a la vista desde el asiento.
+    nail = (side * 0.0535, 0.8265, 0.4185)
+    body.ellipsoid(nail, (0.0078, 0.0086, 0.0034), (1.12, 1.02, 0.98), segments=9, rings=5)
 
 
 def lapels(body, table, y_low, opening, tint):
