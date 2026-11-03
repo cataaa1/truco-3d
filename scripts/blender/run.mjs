@@ -14,6 +14,8 @@ const RAW = 'scripts/blender/.out/boliche.raw.glb';
 const OUT = 'src/client/game/assets/boliche.glb';
 const LIGHT_RAW = 'scripts/blender/.out/luz.png';
 const LIGHT_OUT = 'src/client/game/assets/luz.webp';
+const PROPS_RAW = 'scripts/blender/.out/utileria.png';
+const PROPS_OUT = 'src/client/game/assets/utileria.webp';
 
 function findBlender() {
   if (process.env.BLENDER) return process.env.BLENDER;
@@ -34,7 +36,7 @@ const result = spawnSync(
   blender,
   [
     '--background', '--factory-startup', '--python-exit-code', '1',
-    '--python', 'scripts/blender/boliche.py', '--', RAW, 'src/client/game/assets/room-atlas.json', LIGHT_RAW,
+    '--python', 'scripts/blender/boliche.py', '--', RAW, 'src/client/game/assets/room-atlas.json', LIGHT_RAW, PROPS_RAW,
   ],
   { encoding: 'utf8' },
 );
@@ -64,7 +66,9 @@ await io.write(OUT, document);
 
 // Un desenfoque mínimo se lleva el grano que deja el horneado.
 await sharp(LIGHT_RAW).blur(0.7).webp({ quality: 78, effort: 6 }).toFile(LIGHT_OUT);
+await sharp(PROPS_RAW).webp({ quality: 82, effort: 6 }).toFile(PROPS_OUT);
 
 const kb = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
 console.log(`${OUT}: ${kb(statSync(OUT).size)}, con gzip ${kb(gzipSync(readFileSync(OUT)).length)} (sin comprimir ${kb(statSync(RAW).size)})`);
 console.log(`${LIGHT_OUT}: ${kb(statSync(LIGHT_OUT).size)}`);
+console.log(`${PROPS_OUT}: ${kb(statSync(PROPS_OUT).size)}`);

@@ -188,6 +188,7 @@ export class TableScene {
   private disposed = false;
   private roomTexture: CanvasTexture | null = null;
   private lightTexture: Texture | null = null;
+  private propsTexture: Texture | null = null;
   private readonly resizeObserver: ResizeObserver;
 
   constructor(
@@ -293,19 +294,21 @@ export class TableScene {
   }
 
   private async loadBoliche(tableRadius: number, placeholders: Mesh[]): Promise<void> {
-    const [{ GLTFLoader }, { MeshoptDecoder }, { default: url }, { buildRoomAtlas }, { default: lightUrl }, { default: photosUrl }] = await Promise.all([
+    const [{ GLTFLoader }, { MeshoptDecoder }, { default: url }, { buildRoomAtlas }, { default: lightUrl }, { default: photosUrl }, { default: propsUrl }] = await Promise.all([
       import('three/addons/loaders/GLTFLoader.js'),
       import('three/addons/libs/meshopt_decoder.module.js'),
       import('./assets/boliche.glb?url'),
       import('./roomAtlas'),
       import('./assets/luz.webp?url'),
       import('./assets/materiales.webp?url'),
+      import('./assets/utileria.webp?url'),
       document.fonts.load('40px Rye').catch(() => []),
     ]);
-    const [gltf, lightImage, photos] = await Promise.all([
+    const [gltf, lightImage, photos, propsImage] = await Promise.all([
       new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(url),
       loadImage(lightUrl),
       loadImage(photosUrl),
+      loadImage(propsUrl),
     ]);
     if (this.disposed) return;
 
@@ -334,6 +337,16 @@ export class TableScene {
       return mesh;
     };
     const room = part('boliche', lit);
+    // La utilería trae color y luz horneados juntos en su propia textura.
+    const propsTexture = new Texture(propsImage);
+    propsTexture.needsUpdate = true;
+    propsTexture.flipY = false;
+    propsTexture.colorSpace = SRGBColorSpace;
+    propsTexture.minFilter = LinearMipmapLinearFilter;
+    propsTexture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    this.propsTexture = propsTexture;
+    const props = part('utileria', new MeshBasicMaterial({ map: propsTexture, side: DoubleSide }));
+    props.frustumCulled = false;
     const glowing = part('brillo');
     const table = part('mesa');
     const chairModel = part('silla');
@@ -370,7 +383,7 @@ export class TableScene {
     room.frustumCulled = false;
     glowing.frustumCulled = false;
     table.frustumCulled = false;
-    this.scene.add(room, glowing, tableHolder, chairs, ...this.buildHalos());
+    this.scene.add(room, glowing, props, tableHolder, chairs, ...this.buildHalos());
     // Un poco de aire cargado: lo lejano se aleja de verdad sin sumar geometría.
     this.scene.fog = new FogExp2(0x2a1a10, 0.075);
     this.renderer.setClearColor(0x14100c);
@@ -761,6 +774,7 @@ export class TableScene {
     this.tags.texture.dispose();
     this.roomTexture?.dispose();
     this.lightTexture?.dispose();
+    this.propsTexture?.dispose();
     this.renderer.dispose();
   }
 }

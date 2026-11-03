@@ -17,6 +17,11 @@ args = sys.argv[sys.argv.index("--") + 1 :]
 OUT = Path(args[0])
 ATLAS_FILE = Path(args[1])
 LIGHT_FILE = Path(args[2]).resolve()
+PROPS_FILE = Path(args[3]).resolve()
+PROPS_SIZE = int(os.environ.get("PROPS_SIZE", 2048))
+sys.path.append(str(Path(__file__).resolve().parent))
+import utileria  # noqa: E402
+
 BAKE_SIZE = int(os.environ.get("BAKE_SIZE", 2048))
 BAKE_SAMPLES = int(os.environ.get("BAKE_SAMPLES", 256))
 # Rango guardado en la imagen de luz. El juego usa el mismo valor en LIGHT_RANGE.
@@ -32,6 +37,13 @@ HEIGHT = 3.6
 X_MIN, X_MAX = -3.6, 3.6
 Z_MIN, Z_MAX = -3.8, 4.0
 TABLE_Y = 0.74
+
+# Objetos de utileria.py colgados en el salón: (objeto, posición del punto de apoyo en el juego, giro).
+# El giro dice hacia dónde mira el frente: -90° hacia -x (pared derecha), 180° hacia -z (pared de atrás).
+PROPS = [
+    ("cuadro_camiseta", (X_MAX, 1.5, 0.45), -90),
+    ("cuadro_camiseta", (-0.72, 2.32, Z_MAX), 180),
+]
 
 # (posición, color lineal, potencia en vatios de Blender, radio)
 LAMPS = [
@@ -884,7 +896,6 @@ def build_room():
     frame(room, -1.9, -1.0, 1.15, 2.45, right, "mirror")
     frame(room, -0.8, 1.25, 2.12, 2.95, right, "sign_red", thickness=0.02)
     frame(room, -0.8, -0.1, 1.15, 1.85, right, "portrait")
-    frame(room, 0.1, 0.8, 1.15, 1.85, right, "landscape")
     frame(room, -2.42, -0.9, 2.55, 2.93, right, "dicho_a", thickness=0.02)
     frame(room, 1.85, 3.25, 2.84, 3.2, right, "dicho_b", thickness=0.02)
     frame(room, 1.0, 1.75, 1.0, 2.0, right, "mirror")
@@ -929,7 +940,6 @@ def build_room():
     coat_rack(room, 0.72, 3.68)
     frame(room, -2.75, -1.75, 1.35, 2.35, ("z", Z_MAX, -1), "photos", thickness=0.04)
     frame(room, -1.3, -0.15, 1.35, 1.95, ("z", Z_MAX, -1), "portrait", thickness=0.04)
-    frame(room, -1.3, -0.15, 2.05, 2.6, ("z", Z_MAX, -1), "landscape", thickness=0.04)
     argentine_flag(room, 2.62, 3.42, 1.55, 2.1, Z_MAX)
     sconce(room, back_wall, -1.52, 2.45)
     sconce(room, back_wall, 0.75, 2.45)
@@ -1865,7 +1875,88 @@ def use_gpu():
     return "CPU"
 
 
-def bake_light(room_obj, glow_obj, table_obj):
+def place_props():
+    """Arma cada objeto de la utilería en su lugar y los junta en una sola malla."""
+    from mathutils import Matrix
+
+    scene = bpy.context.scene
+    placed = []
+    for name, (x, y, z), yaw in PROPS:
+        collection = utileria.build(name)
+        transform = Matrix.Translation((x, -z, y)) @ Matrix.Rotation(math.radians(yaw), 4, "Z")
+        for obj in list(collection.objects):
+            obj.data.transform(transform)
+            collection.objects.unlink(obj)
+            scene.collection.objects.link(obj)
+            placed.append(obj)
+        bpy.data.collections.remove(collection)
+    for obj in bpy.data.objects:
+        obj.select_set(obj in placed)
+    bpy.context.view_layer.objects.active = placed[0]
+    bpy.ops.object.join()
+    props = bpy.context.view_layer.objects.active
+    props.name = props.data.name = "utileria"
+    return props
+
+
+def bake_props(props_obj):
+    """Hornea color y luz juntos en una textura propia: el juego la muestra tal cual."""
+    scene = bpy.context.scene
+    for obj in bpy.data.objects:
+        obj.select_set(obj is props_obj)
+    bpy.context.view_layer.objects.active = props_obj
+    mesh = props_obj.data
+    baked = mesh.uv_layers.new(name="Horneado")
+    mesh.uv_layers.active = baked
+    baked.active_render = True
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(60), island_margin=0.003, area_weight=0.0, correct_aspect=False)
+    # Lo que tiene dibujo fino gana resolución; después se acomoda todo, también dentro de los huecos de los marcos.
+    bm = bmesh.from_edit_mesh(mesh)
+    uv = bm.loops.layers.uv.active
+    detailed = {i for i, slot in enumerate(props_obj.material_slots) if slot.material.name in utileria.DETAILED}
+    for bm_face in bm.faces:
+        if bm_face.material_index in detailed:
+            for loop in bm_face.loops:
+                loop[uv].uv *= 2.4
+    bmesh.update_edit_mesh(mesh)
+    bpy.ops.uv.pack_islands(margin=0.002, rotate=True, shape_method="CONCAVE")
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    image = bpy.data.images.new("utileria", PROPS_SIZE, PROPS_SIZE, float_buffer=True)
+    for slot in props_obj.material_slots:
+        nodes = slot.material.node_tree.nodes
+        target = nodes.new("ShaderNodeTexImage")
+        target.image = image
+        nodes.active = target
+    scene.render.bake.use_pass_direct = True
+    scene.render.bake.use_pass_indirect = True
+    scene.render.bake.use_pass_color = True
+    scene.render.bake.margin = 4
+    bpy.ops.object.bake(type="DIFFUSE")
+
+    pixels = np.zeros(PROPS_SIZE * PROPS_SIZE * 4, dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    rgb = pixels.reshape(-1, 4)[:, :3]
+    linear = np.clip(rgb, 0, 1)
+    rgb[:] = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055)
+    pixels.reshape(-1, 4)[:, 3] = 1.0
+    encoded = bpy.data.images.new("utileria8", PROPS_SIZE, PROPS_SIZE, float_buffer=False)
+    encoded.colorspace_settings.name = "Non-Color"
+    encoded.pixels.foreach_set(pixels)
+    encoded.filepath_raw = str(PROPS_FILE)
+    encoded.file_format = "PNG"
+    encoded.save()
+    print(f"Horneado: utilería {PROPS_SIZE} px, {len(mesh.polygons)} caras")
+
+    # Solo queda la UV del horneado, sin materiales.
+    for layer in [layer for layer in mesh.uv_layers if layer.name != "Horneado"]:
+        mesh.uv_layers.remove(layer)
+    props_obj.data.materials.clear()
+
+
+def bake_light(room_obj, glow_obj, table_obj, props_obj):
     """Calcula toda la luz del salón y la guarda en una imagen, con sombras y rebotes reales."""
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
@@ -1909,7 +2000,7 @@ def bake_light(room_obj, glow_obj, table_obj):
     mesh.uv_layers.active = lightmap
     lightmap.active_render = True
     for other in bpy.data.objects:
-        if other.type == "MESH" and other not in (room_obj, glow_obj, table_obj):
+        if other.type == "MESH" and other not in (room_obj, glow_obj, table_obj, props_obj):
             other.hide_render = True
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
@@ -1971,8 +2062,10 @@ build_chair().finish()
 build_body().finish()
 build_head().finish()
 build_face().finish()
+props_obj = place_props()
 bpy.context.view_layer.update()
-bake_light(room_obj, glow_obj, table_obj)
+bake_light(room_obj, glow_obj, table_obj, props_obj)
+bake_props(props_obj)
 for obj in bpy.data.objects:
     if obj.type == "MESH" and obj.data.color_attributes.get("Albedo"):
         obj.data.color_attributes.remove(obj.data.color_attributes["Albedo"])
