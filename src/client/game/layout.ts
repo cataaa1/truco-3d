@@ -4,7 +4,7 @@ export const PLAYED_H = 0.234;
 const PLAYED_GAP = 0.03;
 // Mi fila arranca justo delante de las cartas que tengo en la mano, para que no las tapen.
 const MY_ROW_FROM_SEAT = 0.98;
-const OTHERS_ROW = { 2: 0.5, 4: 0.5, 6: 0.72 } as Record<number, number>;
+const OTHERS_ROW = { 2: 0.5, 4: 0.5, 6: 0.66 } as Record<number, number>;
 const CARD_Y = 0.003;
 
 export interface TableSize {
@@ -32,20 +32,14 @@ export function playedCard(players: number, slot: number, round: number): Played
   const spot = slot === 0 ? seatRadius - MY_ROW_FROM_SEAT : tableRadius * OTHERS_ROW[players]!;
   const centerX = Math.sin(angle) * spot;
   const centerZ = Math.cos(angle) * spot;
-  // Todas las cartas del mismo tamaño y paradas: cada jugador arma una fila recta a lo largo de su borde de la mesa
-  // (horizontal arriba y abajo, vertical a los costados), con la primera carta en el centro del lugar.
-  const tx = Math.cos(angle);
-  const tz = -Math.sin(angle);
-  const step = Math.min(
-    Math.abs(tx) > 1e-6 ? (PLAYED_W + PLAYED_GAP) / Math.abs(tx) : Infinity,
-    Math.abs(tz) > 1e-6 ? (PLAYED_H + PLAYED_GAP) / Math.abs(tz) : Infinity,
-  );
-  const offset = (round - 1) * step;
+  // Todas las cartas del mismo tamaño, mirando hacia quien las tiró (el borde de arriba de la carta apunta al centro
+  // de la mesa). Cada jugador arma una fila recta a lo largo de su borde, con la primera carta en el centro del lugar.
+  const offset = (round - 1) * (PLAYED_W + PLAYED_GAP);
   return {
-    x: centerX + tx * offset,
+    x: centerX + Math.cos(angle) * offset,
     y: CARD_Y + round * 0.001,
-    z: centerZ + tz * offset,
-    yaw: 0,
+    z: centerZ - Math.sin(angle) * offset,
+    yaw: angle,
     scale: 1,
   };
 }
