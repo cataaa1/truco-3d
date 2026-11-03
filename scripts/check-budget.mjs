@@ -4,14 +4,14 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
 const KB = 1024;
-const LIMITS = { entry: 25 * KB, game: 230 * KB, ambience: 1400 * KB, deck: 400 * KB, menu: 420 * KB, voices: 4096 * KB, total: 3072 * KB };
+const LIMITS = { entry: 25 * KB, game: 230 * KB, ambience: 700 * KB, deck: 400 * KB, menu: 420 * KB, voices: 4096 * KB, total: 2048 * KB };
 
 const dir = 'dist/assets';
 const files = readdirSync(dir).filter((f) => statSync(join(dir, f)).isFile());
 const sizes = files.map((f) => {
   const data = readFileSync(join(dir, f));
   // Fuentes e imágenes ya vienen comprimidas: gzip no les cambia nada.
-  return { f, gz: /\.(woff2|webp)$/.test(f) ? data.length : gzipSync(data).length };
+  return { f, gz: /\.(woff2|webp|avif)$/.test(f) ? data.length : gzipSync(data).length };
 });
 const html = gzipSync(readFileSync('dist/index.html')).length;
 const sum = (test) => sizes.filter(({ f }) => test(f)).reduce((s, x) => s + x.gz, 0);

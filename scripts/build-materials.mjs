@@ -6,7 +6,7 @@ import sharp from 'sharp';
 
 const dir = process.argv[2];
 if (!dir) throw new Error('Falta la carpeta con las texturas');
-const OUT = 'src/client/game/assets/materiales.webp';
+const OUT = 'src/client/game/assets/materiales.avif';
 const photo = (name) => sharp(join(dir, `${name}_diff_1k.jpg`));
 
 /** Solo la veta y el grano, con brillo parejo: el color lo pone cada pieza del modelo. */
@@ -27,6 +27,6 @@ const layers = await Promise.all([
 ]);
 await sharp({ create: { width: 1024, height: 1024, channels: 3, background: '#000' } })
   .composite(layers)
-  .webp({ quality: 74, effort: 6 })
+  .avif({ quality: 50, effort: 7 })
   .toFile(OUT);
 console.log(`${OUT}: ${(statSync(OUT).size / 1024).toFixed(0)} KB`);

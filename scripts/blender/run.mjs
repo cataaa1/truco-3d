@@ -13,11 +13,12 @@ const ROOT = 'C:/Program Files/Blender Foundation';
 const RAW = 'scripts/blender/.out/boliche.raw.glb';
 const OUT = 'src/client/game/assets/boliche.glb';
 const LIGHT_RAW = 'scripts/blender/.out/luz.png';
-const LIGHT_OUT = 'src/client/game/assets/luz.webp';
+const LIGHT_OUT = 'src/client/game/assets/luz.avif';
 const PROPS_RAW = 'scripts/blender/.out/utileria.png';
-const PROPS_OUT = 'src/client/game/assets/utileria.webp';
+const PROPS_OUT = 'src/client/game/assets/utileria.avif';
 const BOTTLES_RAW = 'scripts/blender/.out/botellas.png';
-const BOTTLES_OUT = 'src/client/game/assets/botellas.webp';
+const BOTTLES_OUT = 'src/client/game/assets/botellas.avif';
+const BOTTLES_JSON = 'src/client/game/assets/botellas.json';
 
 function findBlender() {
   if (process.env.BLENDER) return process.env.BLENDER;
@@ -38,7 +39,7 @@ const result = spawnSync(
   blender,
   [
     '--background', '--factory-startup', '--python-exit-code', '1',
-    '--python', 'scripts/blender/boliche.py', '--', RAW, 'src/client/game/assets/room-atlas.json', LIGHT_RAW, PROPS_RAW, BOTTLES_RAW,
+    '--python', 'scripts/blender/boliche.py', '--', RAW, 'src/client/game/assets/room-atlas.json', LIGHT_RAW, PROPS_RAW, BOTTLES_RAW, BOTTLES_JSON,
   ],
   { encoding: 'utf8' },
 );
@@ -67,10 +68,10 @@ document
 await io.write(OUT, document);
 
 // Un desenfoque mínimo se lleva el grano que deja el horneado.
-await sharp(LIGHT_RAW).blur(0.7).webp({ quality: 78, effort: 6 }).toFile(LIGHT_OUT);
-await sharp(PROPS_RAW).webp({ quality: 82, effort: 6 }).toFile(PROPS_OUT);
-// Un desenfoque leve se lleva el grano del horneado en piezas tan chicas.
-await sharp(BOTTLES_RAW).blur(0.5).webp({ quality: 80, effort: 6 }).toFile(BOTTLES_OUT);
+// AVIF pesa la mitad que WebP con la misma calidad a la vista; de paso se lleva el grano del horneado.
+await sharp(LIGHT_RAW).blur(0.7).avif({ quality: 45, effort: 7 }).toFile(LIGHT_OUT);
+await sharp(PROPS_RAW).avif({ quality: 45, effort: 7 }).toFile(PROPS_OUT);
+await sharp(BOTTLES_RAW).avif({ quality: 50, effort: 7 }).toFile(BOTTLES_OUT);
 
 const kb = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
 console.log(`${OUT}: ${kb(statSync(OUT).size)}, con gzip ${kb(gzipSync(readFileSync(OUT)).length)} (sin comprimir ${kb(statSync(RAW).size)})`);

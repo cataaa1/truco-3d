@@ -20,6 +20,9 @@ LIGHT_FILE = Path(args[2]).resolve()
 PROPS_FILE = Path(args[3]).resolve()
 PROPS_SIZE = int(os.environ.get("PROPS_SIZE", 2048))
 BOTTLES_FILE = Path(args[4]).resolve()
+BOTTLES_JSON = Path(args[5]).resolve()
+# Las botellas se arman una vez por tipo lejos del salón y el juego las repite donde van.
+CATALOG_X = 30.0
 sys.path.append(str(Path(__file__).resolve().parent))
 import utileria  # noqa: E402
 
@@ -1941,24 +1944,131 @@ def bake_props(props_obj, size, out_file):
     scene.render.bake.margin = 4
     bpy.ops.object.bake(type="DIFFUSE")
 
-    pixels = np.zeros(size * size * 4, dtype=np.float32)
-    image.pixels.foreach_get(pixels)
-    rgb = pixels.reshape(-1, 4)[:, :3]
-    linear = np.clip(rgb, 0, 1)
-    rgb[:] = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055)
-    pixels.reshape(-1, 4)[:, 3] = 1.0
-    encoded = bpy.data.images.new(f"{props_obj.name}8", size, size, float_buffer=False)
-    encoded.colorspace_settings.name = "Non-Color"
-    encoded.pixels.foreach_set(pixels)
-    encoded.filepath_raw = str(out_file)
-    encoded.file_format = "PNG"
-    encoded.save()
+    encode_srgb(image, size, out_file)
     print(f"Horneado: {props_obj.name} {size} px, {len(mesh.polygons)} caras")
 
     # Solo queda la UV del horneado, sin materiales.
     for layer in [layer for layer in mesh.uv_layers if layer.name != "Horneado"]:
         mesh.uv_layers.remove(layer)
     props_obj.data.materials.clear()
+
+
+def select_only(objects):
+    for obj in bpy.data.objects:
+        obj.select_set(obj in objects)
+    bpy.context.view_layer.objects.active = objects[0]
+
+
+def encode_srgb(image, size, out_file):
+    pixels = np.zeros(size * size * 4, dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    rgb = pixels.reshape(-1, 4)[:, :3]
+    linear = np.clip(rgb, 0, 1)
+    rgb[:] = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055)
+    pixels.reshape(-1, 4)[:, 3] = 1.0
+    encoded = bpy.data.images.new(f"{image.name}8", size, size, float_buffer=False)
+    encoded.colorspace_settings.name = "Non-Color"
+    encoded.pixels.foreach_set(pixels)
+    encoded.filepath_raw = str(out_file)
+    encoded.file_format = "PNG"
+    encoded.save()
+
+
+def build_bottle_catalog():
+    """Una botella de cada tipo, a un costado y fuera del salón: el juego después las repite."""
+    from mathutils import Matrix, Vector
+
+    scene = bpy.context.scene
+    kinds = sorted({(name, options["light"]) for name, _, _, options in BOTTLES})
+    catalog = []
+    for index, (name, light) in enumerate(kinds):
+        collection = utileria.build(name, light=light)
+        offset = Vector((CATALOG_X + index * 0.2, 0, 0))
+        parts = []
+        for obj in list(collection.objects):
+            obj.data.transform(Matrix.Translation(offset))
+            collection.objects.unlink(obj)
+            scene.collection.objects.link(obj)
+            parts.append(obj)
+        bpy.data.collections.remove(collection)
+        select_only(parts)
+        bpy.ops.object.join()
+        obj = bpy.context.view_layer.objects.active
+        obj.name = obj.data.name = name + ("_lejos" if light else "")
+        catalog.append((obj, offset))
+    return catalog
+
+
+def bake_bottle_catalog(catalog, size=512):
+    """Solo el color de cada tipo de botella, con el brillo pintado: la luz la pone cada copia en el juego."""
+    from mathutils import Matrix
+
+    scene = bpy.context.scene
+    objects = [obj for obj, _ in catalog]
+    # El horneado del salón las dejó fuera del render: acá vuelven.
+    for obj in objects:
+        obj.hide_render = False
+    select_only(objects)
+    for obj in objects:
+        layer = obj.data.uv_layers.new(name="Horneado")
+        obj.data.uv_layers.active = layer
+        layer.active_render = True
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(60), island_margin=0.004, area_weight=0.0, correct_aspect=False)
+    bpy.ops.uv.pack_islands(margin=0.004, rotate=True, shape_method="CONCAVE")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    image = bpy.data.images.new("botellas", size, size, float_buffer=True)
+    for obj in objects:
+        for slot in obj.material_slots:
+            nodes = slot.material.node_tree.nodes
+            target = nodes.new("ShaderNodeTexImage")
+            target.image = image
+            nodes.active = target
+    scene.render.bake.use_pass_direct = False
+    scene.render.bake.use_pass_indirect = False
+    scene.render.bake.use_pass_color = True
+    scene.render.bake.margin = 4
+    bpy.ops.object.bake(type="DIFFUSE")
+    encode_srgb(image, size, BOTTLES_FILE)
+    for obj, offset in catalog:
+        obj.data.transform(Matrix.Translation(-offset))
+        for layer in [layer for layer in obj.data.uv_layers if layer.name != "Horneado"]:
+            obj.data.uv_layers.remove(layer)
+        obj.data.materials.clear()
+    print(f"Horneado: {len(catalog)} tipos de botella, {sum(len(o.data.polygons) for o in objects)} caras en total")
+
+
+def light_under(room_obj, light, x, y, z):
+    """Luz que llega a la tabla donde se apoya una botella, leída de la imagen de luz ya calculada."""
+    from mathutils import Vector
+    from mathutils.interpolate import poly_3d_calc
+
+    hit, location, _, index = room_obj.ray_cast(Vector((x, -z, y + 0.05)), Vector((0, 0, -1)), distance=0.2)
+    if not hit:
+        print(f"Horneado: sin apoyo para la botella en {x:.2f}, {y:.2f}, {z:.2f}")
+        return (0.5, 0.5, 0.5)
+    mesh = room_obj.data
+    polygon = mesh.polygons[index]
+    uvs = mesh.uv_layers["Lightmap"].data
+    weights = poly_3d_calc([mesh.vertices[v].co for v in polygon.vertices], location)
+    u = sum(w * uvs[loop].uv.x for w, loop in zip(weights, polygon.loop_indices))
+    v = sum(w * uvs[loop].uv.y for w, loop in zip(weights, polygon.loop_indices))
+    px = min(BAKE_SIZE - 2, max(1, int(u * BAKE_SIZE)))
+    py = min(BAKE_SIZE - 2, max(1, int(v * BAKE_SIZE)))
+    patch = light[py - 1:py + 2, px - 1:px + 2, :3]
+    return tuple(float(c) for c in patch.reshape(-1, 3).mean(axis=0))
+
+
+def write_bottles(room_obj, light, catalog):
+    names = [obj.name for obj, _ in catalog]
+    instances = []
+    for name, (x, y, z), turn, options in BOTTLES:
+        kind = names.index(name + ("_lejos" if options["light"] else ""))
+        r, g, b = light_under(room_obj, light, x, y, z)
+        instances.append([kind, round(x, 3), round(y, 3), round(z, 3), round(math.radians(turn), 3), round(r, 3), round(g, 3), round(b, 3)])
+    BOTTLES_JSON.write_text(json.dumps({"types": names, "instances": instances}, separators=(",", ":")) + "\n", encoding="utf8")
+    print(f"Horneado: {len(instances)} botellas ubicadas")
 
 
 def bake_light(room_obj, glow_obj, table_obj, props_objs):
@@ -2042,6 +2152,7 @@ def bake_light(room_obj, glow_obj, table_obj, props_objs):
     encoded.filepath_raw = str(LIGHT_FILE)
     encoded.file_format = "PNG"
     encoded.save()
+    light = pixels.reshape(BAKE_SIZE, BAKE_SIZE, 4).copy()
 
     # Se deja todo como lo espera el exportador.
     mesh.uv_layers.active_index = 0
@@ -2053,6 +2164,7 @@ def bake_light(room_obj, glow_obj, table_obj, props_objs):
         if albedo:
             obj.data.color_attributes.remove(albedo)
         obj.data.color_attributes.active_color = obj.data.color_attributes["Color"]
+    return light
 
 
 for item in list(bpy.data.objects):
@@ -2068,12 +2180,12 @@ build_body().finish()
 build_head().finish()
 build_face().finish()
 props_obj = place_props(PROPS, "utileria")
-bottles_obj = place_props(BOTTLES, "botellas")
+catalog = build_bottle_catalog()
 bpy.context.view_layer.update()
-bake_light(room_obj, glow_obj, table_obj, (props_obj, bottles_obj))
+light = bake_light(room_obj, glow_obj, table_obj, (props_obj,))
 bake_props(props_obj, PROPS_SIZE, PROPS_FILE)
-# Se ven de lejos: alcanza con menos resolución que el cuadro.
-bake_props(bottles_obj, 1024, BOTTLES_FILE)
+bake_bottle_catalog(catalog)
+write_bottles(room_obj, light, catalog)
 for obj in bpy.data.objects:
     if obj.type == "MESH" and obj.data.color_attributes.get("Albedo"):
         obj.data.color_attributes.remove(obj.data.color_attributes["Albedo"])

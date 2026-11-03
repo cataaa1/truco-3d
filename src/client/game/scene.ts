@@ -307,15 +307,16 @@ export class TableScene {
   }
 
   private async loadBoliche(tableRadius: number, placeholders: Mesh[]): Promise<void> {
-    const [{ GLTFLoader }, { MeshoptDecoder }, { default: url }, { buildRoomAtlas }, { default: lightUrl }, { default: photosUrl }, { default: propsUrl }, { default: bottlesUrl }] = await Promise.all([
+    const [{ GLTFLoader }, { MeshoptDecoder }, { default: url }, { buildRoomAtlas }, { default: lightUrl }, { default: photosUrl }, { default: propsUrl }, { default: bottlesUrl }, { default: bottleList }] = await Promise.all([
       import('three/addons/loaders/GLTFLoader.js'),
       import('three/addons/libs/meshopt_decoder.module.js'),
       import('./assets/boliche.glb?url'),
       import('./roomAtlas'),
-      import('./assets/luz.webp?url'),
-      import('./assets/materiales.webp?url'),
-      import('./assets/utileria.webp?url'),
-      import('./assets/botellas.webp?url'),
+      import('./assets/luz.avif?url'),
+      import('./assets/materiales.avif?url'),
+      import('./assets/utileria.avif?url'),
+      import('./assets/botellas.avif?url'),
+      import('./assets/botellas.json'),
       document.fonts.load('40px Rye').catch(() => []),
     ]);
     const [gltf, lightImage, photos, propsImage, bottlesImage] = await Promise.all([
@@ -352,8 +353,7 @@ export class TableScene {
       return mesh;
     };
     const room = part('boliche', lit);
-    // La utilería y las botellas traen color y luz horneados juntos en su propia textura.
-    const baked = (image: HTMLImageElement, name: string) => {
+    const bakedTexture = (image: HTMLImageElement) => {
       const map = new Texture(image);
       map.needsUpdate = true;
       map.flipY = false;
@@ -361,12 +361,12 @@ export class TableScene {
       map.minFilter = LinearMipmapLinearFilter;
       map.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
       this.bakedTextures.push(map);
-      const mesh = part(name, new MeshBasicMaterial({ map, side: DoubleSide }));
-      mesh.frustumCulled = false;
-      return mesh;
+      return map;
     };
-    const props = baked(propsImage, 'utileria');
-    const bottles = baked(bottlesImage, 'botellas');
+    // La utilería trae color y luz horneados juntos en su propia textura.
+    const props = part('utileria', new MeshBasicMaterial({ map: bakedTexture(propsImage), side: DoubleSide }));
+    props.frustumCulled = false;
+    const bottles = this.buildBottles(gltf.scene, bakedTexture(bottlesImage), bottleList);
     const glowing = part('brillo');
     const table = part('mesa');
     const chairModel = part('silla');
@@ -403,11 +403,36 @@ export class TableScene {
     room.frustumCulled = false;
     glowing.frustumCulled = false;
     table.frustumCulled = false;
-    this.scene.add(room, glowing, props, bottles, tableHolder, chairs, ...this.buildHalos());
+    this.scene.add(room, glowing, props, ...bottles, tableHolder, chairs, ...this.buildHalos());
     // Un poco de aire cargado: lo lejano se aleja de verdad sin sumar geometría.
     this.scene.fog = new FogExp2(0x2a1a10, 0.075);
     this.renderer.setClearColor(0x14100c);
     this.invalidate();
+  }
+
+  /**
+   * Una geometría por tipo de botella, repetida en cada lugar con la luz de la tabla donde se apoya.
+   * Cada copia: [tipo, x, y, z, giro, r, g, b].
+   */
+  private buildBottles(models: Object3D, map: Texture, list: { types: string[]; instances: number[][] }): InstancedMesh[] {
+    const material = new MeshBasicMaterial({ map });
+    const color = new Color();
+    return list.types.map((name, kind) => {
+      const model = models.getObjectByName(name) as Mesh;
+      model.updateMatrix();
+      const copies = list.instances.filter((copy) => copy[0] === kind);
+      const mesh = new InstancedMesh(model.geometry, material, copies.length);
+      copies.forEach(([, x, y, z, turn, r, g, b], index) => {
+        helper.position.set(x!, y!, z!);
+        helper.rotation.set(0, turn!, 0);
+        helper.scale.set(1, 1, 1);
+        helper.updateMatrix();
+        mesh.setMatrixAt(index, matrix.multiplyMatrices(helper.matrix, model.matrix));
+        mesh.setColorAt(index, color.setRGB(r!, g!, b!));
+      });
+      mesh.frustumCulled = false;
+      return mesh;
+    });
   }
 
   private buildHalos(): Sprite[] {
