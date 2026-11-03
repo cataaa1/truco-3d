@@ -4,7 +4,7 @@ export const PLAYED_H = 0.234;
 const PLAYED_GAP = 0.03;
 // Mi fila arranca justo delante de las cartas que tengo en la mano, para que no las tapen.
 const MY_ROW_FROM_SEAT = 0.98;
-const OTHERS_ROW = { 2: 0.5, 4: 0.5, 6: 0.66 } as Record<number, number>;
+const OTHERS_ROW = { 2: 0.5, 4: 0.5, 6: 0.72 } as Record<number, number>;
 const CARD_Y = 0.003;
 
 export interface TableSize {
@@ -32,18 +32,20 @@ export function playedCard(players: number, slot: number, round: number): Played
   const spot = slot === 0 ? seatRadius - MY_ROW_FROM_SEAT : tableRadius * OTHERS_ROW[players]!;
   const centerX = Math.sin(angle) * spot;
   const centerZ = Math.cos(angle) * spot;
-  const dx = -centerX;
-  const dz = seatRadius - centerZ;
-  const distance = Math.hypot(dx, dz);
-  // Las cartas lejanas se dibujan más grandes para que se lean igual que las cercanas.
-  const scale = slot === 0 ? 1 : 1 + Math.min(0.32, Math.max(0, (distance - 0.9) * 0.4));
-  // Cada fila queda de frente a quien mira, con aire entre carta y carta.
-  const offset = (round - 1) * (PLAYED_W + PLAYED_GAP) * scale;
+  // Todas las cartas del mismo tamaño y paradas: cada jugador arma una fila recta a lo largo de su borde de la mesa
+  // (horizontal arriba y abajo, vertical a los costados), con la primera carta en el centro del lugar.
+  const tx = Math.cos(angle);
+  const tz = -Math.sin(angle);
+  const step = Math.min(
+    Math.abs(tx) > 1e-6 ? (PLAYED_W + PLAYED_GAP) / Math.abs(tx) : Infinity,
+    Math.abs(tz) > 1e-6 ? (PLAYED_H + PLAYED_GAP) / Math.abs(tz) : Infinity,
+  );
+  const offset = (round - 1) * step;
   return {
-    x: centerX + (offset * dz) / distance,
+    x: centerX + tx * offset,
     y: CARD_Y + round * 0.001,
-    z: centerZ - (offset * dx) / distance,
-    yaw: Math.atan2(dx, dz),
-    scale,
+    z: centerZ + tz * offset,
+    yaw: 0,
+    scale: 1,
   };
 }
