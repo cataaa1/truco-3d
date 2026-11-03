@@ -231,9 +231,9 @@ def number(name, text, center, height, y, mat, collection):
 
 
 def cuadro_camiseta(collection_name="cuadro_camiseta"):
-    """Camiseta celeste y blanca con la 10, enmarcada como en los bares. Mide 0,66 x 0,8 m."""
+    """Camiseta celeste y blanca de Messi con la 10, enmarcada como en los bares. Mide 0,66 x 0,72 m."""
     collection = bpy.data.collections.new(collection_name)
-    W, H, D = 0.66, 0.8, 0.07
+    W, H, D = 0.66, 0.72, 0.07
     frame_black = material("marco_negro", (0.02, 0.02, 0.022), roughness=0.28)
     velvet = material("fondo_terciopelo", (0.01, 0.01, 0.012), roughness=0.95)
     line = material("filete_blanco", (0.8, 0.8, 0.78), roughness=0.5)
@@ -242,46 +242,46 @@ def cuadro_camiseta(collection_name="cuadro_camiseta"):
     ink = material("camiseta_negro", BLACK, roughness=0.55)
     gold = material("bordado_oro", GOLD, roughness=0.35)
 
-    # Marco y fondo: la camiseta queda adentro de una caja con profundidad.
+    # Marco y fondo: la camiseta queda adentro de una caja con profundidad y ocupa toda la ventana.
     frame_ring("marco", (W, H), (W - 0.09, H - 0.09), -D, 0.0, 0.0, 0.009, frame_black, collection)
     rounded_box("fondo", (W - 0.07, 0.012, H - 0.07), (0, -0.008, 0), 0.002, velvet, collection, segments=1)
     front = -0.016
     frame_ring("filete_exterior", (W - 0.115, H - 0.115), (W - 0.124, H - 0.124), front - 0.0015, front, 0.0, 0.0006, line, collection, segments=1)
-    shirt_z = 0.03
-    frame_ring("filete_camiseta", (0.52, 0.45), (0.51, 0.44), front - 0.0015, front, shirt_z + 0.02, 0.0006, line, collection, segments=1)
-    rounded_box("filete_base", (0.44, 0.002, 0.005), (0, front - 0.001, -0.25), 0.0008, line, collection, segments=1)
+    frame_ring("filete_camiseta", (0.52, 0.52), (0.51, 0.51), front - 0.0015, front, 0.0, 0.0006, line, collection, segments=1)
 
-    # Cuerpo de la camiseta, dibujado en tamaño real y achicado para entrar en el marco.
+    # La camiseta se dibuja en tamaño real (el cuerpo va de -0,32 a 0,235 de alto) y se achica para entrar.
     y = front - 0.004
-    k = 0.84
-    fit = lambda pts: [(x * k, (z - shirt_z) * k + shirt_z + 0.005) for x, z in pts]
-    body = [(-0.185, -0.2), (0.185, -0.2), (0.19, 0.0), (0.198, 0.15), (0.17, 0.205)]
+    k = 0.82
+    middle = (0.235 - 0.32) / 2
+    fit = lambda pts: [(x * k, (z - middle) * k) for x, z in pts]
+    body = [(-0.185, -0.32), (0.185, -0.32), (0.19, 0.0), (0.198, 0.15), (0.17, 0.205)]
     collar = arc(0, 0.235, 0.07, 0.045, 0.0, -math.pi, 14)
     body += [(0.07, 0.235)] + collar[1:-1] + [(-0.07, 0.235), (-0.17, 0.205), (-0.198, 0.15), (-0.19, 0.0)]
-    body = [(x, z + shirt_z) for x, z in body]
     flat_shape("camiseta", fit(body), y, 0.006, 0.0026, jersey, collection)
     # Cuello negro redondo.
-    neck = [(x, z + shirt_z) for x, z in arc(0, 0.235, 0.075, 0.05, 0.05, -math.pi - 0.05, 18)]
+    neck = arc(0, 0.235, 0.075, 0.05, 0.05, -math.pi - 0.05, 18)
     flat_shape("cuello", fit(band_along(neck, 0.016)), y - 0.0035, 0.0018, 0.0008, ink, collection)
 
     # Mangas dobladas hacia adelante, con el puño negro.
     for side in (-1, 1):
         sleeve = [(0.155, 0.21), (0.205, 0.195), (0.29, 0.1), (0.262, 0.04), (0.24, 0.05), (0.19, 0.085), (0.188, 0.15)]
-        sleeve = [(side * x, z + shirt_z) for x, z in sleeve]
+        sleeve = [(side * x, z) for x, z in sleeve]
         if side < 0:
             sleeve = sleeve[::-1]
         flat_shape(f"manga_{'izq' if side < 0 else 'der'}", fit(sleeve), y - 0.004, 0.005, 0.0022, sleeve_mat, collection)
         cuff = [(0.29, 0.1), (0.262, 0.04), (0.2525, 0.0495), (0.2805, 0.1095)]
-        cuff = [(side * x, z + shirt_z) for x, z in cuff]
+        cuff = [(side * x, z) for x, z in cuff]
         if side < 0:
             cuff = cuff[::-1]
         flat_shape(f"puno_{'izq' if side < 0 else 'der'}", fit(cuff), y - 0.0068, 0.0012, 0.0005, ink, collection)
 
-    # El sol bordado y el número.
-    (sx, sz), = fit([(0.0, 0.165 + shirt_z)])
-    sun("sol", (sx, sz), y - 0.0034, 0.017 * k, gold, collection)
-    (nx, nz), = fit([(0.0, -0.035 + shirt_z)])
-    number("numero", "10", (nx, nz), 0.32 * k, y - 0.0034, ink, collection)
+    # El sol bordado, separado del cuello, y la espalda con el nombre y el número.
+    (sx, sz), = fit([(0.0, 0.152)])
+    sun("sol", (sx, sz), y - 0.0034, 0.016 * k, gold, collection)
+    (tx, tz), = fit([(0.0, 0.082)])
+    number("nombre", "MESSI", (tx, tz), 0.085 * k, y - 0.0034, ink, collection)
+    (nx, nz), = fit([(0.0, -0.11)])
+    number("numero", "10", (nx, nz), 0.34 * k, y - 0.0034, ink, collection)
     drop_hidden_faces(collection)
     return collection
 
