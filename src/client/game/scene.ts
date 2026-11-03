@@ -30,6 +30,7 @@ import {
   Vector3,
   WebGLRenderer,
   BackSide,
+  Euler,
 } from 'three';
 import type { CardId } from '../../engine/cards';
 import type { PlayerView } from '../../engine/game';
@@ -49,6 +50,11 @@ const EYE_HEIGHT = 1.22;
 const TABLE_Y = 0.74;
 const HEAD_RADIUS = 0.17;
 const FOV = 55;
+const NEAR = 0.05;
+// Vista desde arriba (Shift): margen alrededor de la mesa y lo que se recorta por encima.
+const TOP_MARGIN = 1.12;
+const TOP_CLIP_ABOVE = 0.75;
+const TOP_QUAT = new Quaternion().setFromEuler(new Euler(-Math.PI / 2, 0, 0, 'YXZ'));
 const FACE_SIZE = 0.3;
 // Las cartas en la mano: entre los dedos, con las muñecas apoyadas en el borde de la mesa.
 const HELD_W = 0.085;
@@ -163,6 +169,8 @@ function curvedFace(): PlaneGeometry {
 
 const helper = new Object3D();
 const matrix = new Matrix4();
+const lookQuat = new Quaternion();
+const lookEuler = new Euler(0, 0, 0, 'YXZ');
 
 export class TableScene {
   yaw = 0;
@@ -173,6 +181,10 @@ export class TableScene {
   private readonly scene = new Scene();
   private readonly camera: PerspectiveCamera;
   private readonly seatRadius: number;
+  private readonly tableRadius: number;
+  /** 0 en primera persona, 1 mirando la mesa desde arriba. */
+  private topBlend = 0;
+  private topTarget = 0;
   private readonly cards;
   private readonly faces;
   private readonly tags;
@@ -209,8 +221,9 @@ export class TableScene {
 
     const { seatRadius, tableRadius } = tableSize(players);
     this.seatRadius = seatRadius;
+    this.tableRadius = tableRadius;
 
-    this.camera = new PerspectiveCamera(FOV, 1, 0.05, 30);
+    this.camera = new PerspectiveCamera(FOV, 1, NEAR, 30);
     this.camera.rotation.order = 'YXZ';
     this.camera.position.set(0, EYE_HEIGHT, this.seatRadius);
 
@@ -543,6 +556,43 @@ export class TableScene {
     this.invalidate();
   }
 
+  /** Mientras está activa, la cámara mira la mesa desde arriba, con el propio lugar abajo. */
+  setTopView(on: boolean): void {
+    this.topTarget = on ? 1 : 0;
+    this.invalidate();
+  }
+
+  get topView(): boolean {
+    return this.topTarget === 1;
+  }
+
+  /** Ubica la cámara entre la vista propia y la de arriba, según cuánto avanzó el paso. */
+  private placeCamera(dt: number): boolean {
+    const ease = 1 - Math.exp(-dt * 9);
+    this.topBlend += (this.topTarget - this.topBlend) * ease;
+    if (Math.abs(this.topTarget - this.topBlend) < 0.002) this.topBlend = this.topTarget;
+    const t = this.topBlend * this.topBlend * (3 - 2 * this.topBlend);
+
+    lookEuler.set(this.pitch, -this.yaw, 0);
+    lookQuat.setFromEuler(lookEuler);
+    this.camera.quaternion.copy(lookQuat).slerp(TOP_QUAT, t);
+
+    // Altura justa para que entre toda la mesa, sea la pantalla ancha o angosta.
+    const halfV = (FOV * Math.PI) / 360;
+    const halfH = Math.atan(Math.tan(halfV) * this.camera.aspect);
+    const height = TABLE_Y + (this.tableRadius * TOP_MARGIN) / Math.tan(Math.min(halfV, halfH));
+    this.camera.position.set(0, EYE_HEIGHT + (height - EYE_HEIGHT) * t, this.seatRadius * (1 - t));
+
+    // Desde arriba se recorta lo que queda por encima de las cabezas: lámpara, techo y halos.
+    const near = Math.max(NEAR, height - TABLE_Y - TOP_CLIP_ABOVE);
+    const wanted = NEAR + (near - NEAR) * t * t;
+    if (Math.abs(this.camera.near - wanted) > 1e-4) {
+      this.camera.near = wanted;
+      this.camera.updateProjectionMatrix();
+    }
+    return this.topBlend !== this.topTarget;
+  }
+
   /** Dónde está la mano de un asiento: entre sus dedos, frente a sus ojos y más abajo. */
   private handPlacement(seat: number, index: number, count: number, out: Object3D, lift = 0): void {
     const eye = this.seatPosition(seat);
@@ -738,7 +788,7 @@ export class TableScene {
     this.cards.mesh.instanceMatrix.needsUpdate = true;
     this.cards.slots.needsUpdate = true;
 
-    this.camera.rotation.set(this.pitch, -this.yaw, 0);
+    if (this.placeCamera(dt)) moving = true;
     this.renderer.render(this.scene, this.camera);
 
     if (moving) this.invalidate();
