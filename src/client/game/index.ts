@@ -31,6 +31,7 @@ const STYLE = `
   .cantos div { padding: 1px 0; }
   .cantos div:not(:last-child) { opacity: .6; }
   .cantos .result { color: var(--gold); font-weight: 700; }
+  .cantos .error { color: #ff8a7a; font-style: italic; }
   .cantos .us { color: var(--us); } .cantos .them { color: var(--them); }
   .actions { bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; width: min(760px, 96vw); }
   .actions button { background: rgba(20,16,12,.95); font-family: var(--lettering); color: var(--cream); }
@@ -156,12 +157,15 @@ export function mountGame(
   const names = () => room.seats.map((seat, i) => seat?.name ?? `Jugador ${i + 1}`);
 
   /** Registro chico de cantos, respuestas y resultados al lado de los palitos. */
-  function note(text: string, result = false): void {
+  function note(text: string, result = false, error = false): void {
     const line = document.createElement('div');
     if (result) line.className = 'result';
+    if (error) line.className = 'error';
     line.textContent = text;
     $('cantos').append(line);
     while ($('cantos').childElementCount > 5) $('cantos').firstElementChild!.remove();
+    // Los errores son del momento: se borran solos para no ensuciar el registro.
+    if (error) setTimeout(() => line.remove(), 4000);
   }
 
   /** Si en la mano se cantó truco, al terminar se anota quién lo ganó. */
@@ -565,6 +569,7 @@ export function mountGame(
           voices.play(message.s, `frase${message.i + 1}`);
           break;
         case 'err':
+          note(message.msg, false, true);
           break;
       }
     },
