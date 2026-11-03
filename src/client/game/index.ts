@@ -443,6 +443,15 @@ export function mountGame(
   }
 
   function onMouseDown(event: MouseEvent): void {
+    if (event.button === 2) {
+      // El clic derecho devuelve el cursor sin abrir la pausa.
+      event.preventDefault();
+      if (isLocked()) {
+        releasingCursor = true;
+        document.exitPointerLock();
+      }
+      return;
+    }
     if (event.button !== 0) return;
     const index = isLocked() ? scene.pickHand(0, 0) : scene.pickHand(cursorX, cursorY);
     if (index >= 0 && legal('play')) {
@@ -460,18 +469,22 @@ export function mountGame(
   };
 
   let wasLocked = false;
-  let releasingForGameOver = false;
+  // Se suelta el cursor a propósito (clic derecho o fin de partida): no corresponde abrir la pausa.
+  let releasingCursor = false;
 
   function onLockChange(): void {
     const locked = isLocked();
     if (locked) dragging = false;
     // Con el cursor capturado el navegador se come el Esc: al soltarlo, abre la pausa.
-    else if (wasLocked && !releasingForGameOver) setPause(true);
+    else if (wasLocked && !releasingCursor) setPause(true);
+    if (!locked) releasingCursor = false;
     wasLocked = locked;
     $('crosshair').hidden = !locked;
   }
 
   canvas.addEventListener('mousedown', onMouseDown);
+  const onContextMenu = (event: Event) => event.preventDefault();
+  host.addEventListener('contextmenu', onContextMenu);
   document.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseup', onMouseUp);
   document.addEventListener('keydown', onKeyDown);
@@ -593,7 +606,7 @@ export function mountGame(
       </div>`;
     document.getElementById('exit')!.addEventListener('click', leave);
     if (isLocked()) {
-      releasingForGameOver = true;
+      releasingCursor = true;
       document.exitPointerLock();
     }
   }
@@ -643,6 +656,7 @@ export function mountGame(
     dispose() {
       if (gazeTimer) clearTimeout(gazeTimer);
       canvas.removeEventListener('mousedown', onMouseDown);
+      host.removeEventListener('contextmenu', onContextMenu);
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
       document.removeEventListener('keydown', onKeyDown);
