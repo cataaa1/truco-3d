@@ -319,6 +319,10 @@ export function mountGame(
 
   function onKeyDown(event: KeyboardEvent): void {
     if (event.repeat && !event.code.startsWith('Arrow')) return;
+    if (event.key === 'Shift') {
+      scene.setTopView(true);
+      return;
+    }
     const digit = /^Digit([1-9])$/.exec(event.code);
     const look = 0.05;
     switch (event.code) {
@@ -355,6 +359,7 @@ export function mountGame(
   }
 
   function onKeyUp(event: KeyboardEvent): void {
+    if (event.key === 'Shift') scene.setTopView(false);
     if (event.code === 'KeyQ' && senasOpen) {
       senasOpen = false;
       renderPanel();
@@ -417,6 +422,9 @@ export function mountGame(
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('keyup', onKeyUp);
   document.addEventListener('pointerlockchange', onLockChange);
+  // Si se suelta Shift en otra ventana, la vista vuelve sola.
+  const onBlur = () => scene.setTopView(false);
+  window.addEventListener('blur', onBlur);
 
   $('leave-btn').addEventListener('click', leave);
   $('guide-btn').addEventListener('click', () => {
@@ -505,7 +513,7 @@ export function mountGame(
     const tip = document.createElement('div');
     tip.className = 'tip';
     const cardsHelp = v.legal.some((a) => a.t === 'play') ? 'Clic en una carta o 1, 2, 3 para jugarla. ' : '';
-    tip.textContent = `${cardsHelp}${teamGame ? 'Q + número: seña. ' : ''}C + número: frase.`;
+    tip.textContent = `${cardsHelp}${teamGame ? 'Q + número: seña. ' : ''}C + número: frase. Shift: mesa desde arriba.`;
     box.append(tip);
   }
 
@@ -584,6 +592,7 @@ export function mountGame(
       document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('keyup', onKeyUp);
       document.removeEventListener('pointerlockchange', onLockChange);
+      window.removeEventListener('blur', onBlur);
       if (isLocked()) document.exitPointerLock();
       voices.dispose();
       scene.dispose();
