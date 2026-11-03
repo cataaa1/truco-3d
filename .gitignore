@@ -5,3 +5,4 @@ dist
 .dev.vars
 .env
 scripts/blender/.out
+__pycache__
