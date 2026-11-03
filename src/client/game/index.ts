@@ -134,7 +134,7 @@ export function mountGame(
         <button id="mute-btn">Sonido: sí</button>
         <button id="leave-btn">Salir</button>
       </div>
-      <div class="hud hint" id="hint">Hacé clic en la mesa para mirar con el mouse. Con <kbd>Esc</kbd> recuperás el cursor.</div>
+      <div class="hud hint" id="hint">Hacé clic en la mesa para mirar con el mouse. Con <kbd>Esc</kbd> abrís el menú de pausa.</div>
       <div class="hud actions" id="actions"></div>
       <div class="hud offline" id="offline" hidden>Reconectando...</div>
       <div class="hud" id="overlay"></div>
@@ -246,6 +246,7 @@ export function mountGame(
   let senasOpen = false;
   let phrasesOpen = false;
   let guideOpen = false;
+  let pauseOpen = false;
 
   function send(action: Action): void {
     conn.send({ t: 'act', a: action });
@@ -275,9 +276,33 @@ export function mountGame(
   function renderPanel(): void {
     const overlay = $('overlay');
     overlay.innerHTML = '';
-    if (!senasOpen && !phrasesOpen && !guideOpen) return;
+    if (!senasOpen && !phrasesOpen && !guideOpen && !pauseOpen) return;
     const panel = document.createElement('div');
     panel.className = 'panel';
+    if (pauseOpen) {
+      panel.style.textAlign = 'center';
+      panel.innerHTML = '<h2>Pausa</h2><p class="muted">La partida sigue en curso para los demás: el reloj no se detiene.</p>';
+      const entries: [string, () => void][] = [
+        ['Continuar', () => setPause(false)],
+        ['Guía de señas', () => {
+          pauseOpen = false;
+          guideOpen = true;
+          renderPanel();
+        }],
+        [`Sonido: ${voices.muted ? 'no' : 'sí'}`, toggleMute],
+        ['Salir de la partida', leave],
+      ];
+      entries.forEach(([label, action], i) => {
+        const button = document.createElement('button');
+        button.style.cssText = 'display:block;width:100%;margin-top:8px';
+        if (i === 0) button.className = 'primary';
+        button.textContent = label;
+        button.addEventListener('click', action);
+        panel.append(button);
+      });
+      overlay.append(panel);
+      return;
+    }
     if (phrasesOpen) {
       panel.innerHTML = '<h2>Frases: apretá el número</h2>';
       PHRASES.forEach((phrase, i) => {
@@ -311,6 +336,21 @@ export function mountGame(
     overlay.append(panel);
   }
 
+  function setPause(open: boolean): void {
+    if (open && view?.phase === 'gameOver') return;
+    pauseOpen = open;
+    senasOpen = false;
+    phrasesOpen = false;
+    guideOpen = false;
+    renderPanel();
+  }
+
+  function toggleMute(): void {
+    voices.muted = !voices.muted;
+    $('mute-btn').textContent = `Sonido: ${voices.muted ? 'no' : 'sí'}`;
+    if (pauseOpen) renderPanel();
+  }
+
   function makeSena(index: number): void {
     const sena = SENAS[index];
     if (!sena || !teamGame) return;
@@ -319,6 +359,18 @@ export function mountGame(
 
   function onKeyDown(event: KeyboardEvent): void {
     if (event.repeat && !event.code.startsWith('Arrow')) return;
+    if (event.code === 'Escape') {
+      // Primero se cierra lo que haya abierto; si no hay nada, se abre o se cierra la pausa.
+      if (senasOpen || phrasesOpen || guideOpen) {
+        senasOpen = false;
+        phrasesOpen = false;
+        guideOpen = false;
+        renderPanel();
+      } else setPause(!pauseOpen);
+      event.preventDefault();
+      return;
+    }
+    if (pauseOpen) return;
     if (event.key === 'Shift') {
       scene.setTopView(true);
       return;
@@ -409,9 +461,15 @@ export function mountGame(
     dragging = false;
   };
 
+  let wasLocked = false;
+  let releasingForGameOver = false;
+
   function onLockChange(): void {
     const locked = isLocked();
     if (locked) dragging = false;
+    // Con el cursor capturado el navegador se come el Esc: al soltarlo, abre la pausa.
+    else if (wasLocked && !releasingForGameOver) setPause(true);
+    wasLocked = locked;
     $('crosshair').hidden = !locked;
     $('hint').hidden = locked;
   }
@@ -431,10 +489,7 @@ export function mountGame(
     guideOpen = !guideOpen;
     renderPanel();
   });
-  $('mute-btn').addEventListener('click', () => {
-    voices.muted = !voices.muted;
-    $('mute-btn').textContent = `Sonido: ${voices.muted ? 'no' : 'sí'}`;
-  });
+  $('mute-btn').addEventListener('click', toggleMute);
 
   // Solo se manda la mirada si la cabeza se movió, para cuidar el cupo diario del servidor.
   let lastGazeYaw = Number.NaN;
@@ -531,6 +586,7 @@ export function mountGame(
 
   function renderGameOver(v: PlayerView): void {
     if (v.phase !== 'gameOver') return;
+    pauseOpen = false;
     const overlay = $('overlay');
     overlay.innerHTML = `
       <div class="panel" style="text-align:center">
@@ -539,7 +595,10 @@ export function mountGame(
         <button class="primary" id="exit">Volver al inicio</button>
       </div>`;
     document.getElementById('exit')!.addEventListener('click', leave);
-    if (isLocked()) document.exitPointerLock();
+    if (isLocked()) {
+      releasingForGameOver = true;
+      document.exitPointerLock();
+    }
   }
 
   let lastTurn = -1;
