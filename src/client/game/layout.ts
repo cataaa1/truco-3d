@@ -32,18 +32,14 @@ export function playedCard(players: number, slot: number, round: number): Played
   const spot = slot === 0 ? seatRadius - MY_ROW_FROM_SEAT : tableRadius * OTHERS_ROW[players]!;
   const centerX = Math.sin(angle) * spot;
   const centerZ = Math.cos(angle) * spot;
-  const dx = -centerX;
-  const dz = seatRadius - centerZ;
-  const distance = Math.hypot(dx, dz);
-  // Las cartas lejanas se dibujan más grandes para que se lean igual que las cercanas.
-  const scale = slot === 0 ? 1 : 1 + Math.min(0.32, Math.max(0, (distance - 0.9) * 0.4));
-  // Cada fila queda de frente a quien mira, con aire entre carta y carta.
-  const offset = (round - 1) * (PLAYED_W + PLAYED_GAP) * scale;
+  // Todas las cartas del mismo tamaño, mirando hacia quien las tiró (el borde de arriba de la carta apunta al centro
+  // de la mesa). Cada jugador arma una fila recta a lo largo de su borde, con la primera carta en el centro del lugar.
+  const offset = (round - 1) * (PLAYED_W + PLAYED_GAP);
   return {
-    x: centerX + (offset * dz) / distance,
+    x: centerX + Math.cos(angle) * offset,
     y: CARD_Y + round * 0.001,
-    z: centerZ - (offset * dx) / distance,
-    yaw: Math.atan2(dx, dz),
-    scale,
+    z: centerZ - Math.sin(angle) * offset,
+    yaw: angle,
+    scale: 1,
   };
 }
