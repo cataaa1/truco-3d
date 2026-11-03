@@ -35,7 +35,7 @@ import {
 import type { CardId } from '../../engine/cards';
 import type { PlayerView } from '../../engine/game';
 import { MAX_PITCH, MAX_YAW, MIN_PITCH } from '../../shared/protocol';
-import { BACK_SLOT, buildCardAtlas, buildFaceAtlas, CARD_GRID, FACE_GRID, NEUTRAL_FACE } from './atlas';
+import { BACK_SLOT, BLINK_FACE, buildCardAtlas, buildFaceAtlas, CARD_GRID, FACE_GRID, NEUTRAL_FACE, SMILE_FACE } from './atlas';
 import { appearanceFor, characterMaterial, faceMaterial, setCharacterInstances, smoothNormals } from './characters';
 import { PLAYED_H, PLAYED_W, playedCard, tableSize } from './layout';
 import cardArtUrl from './assets/cartas.webp?url';
@@ -152,7 +152,17 @@ interface Head {
   targetPitch: number;
   face: number;
   faceTimer: ReturnType<typeof setTimeout> | null;
+  /** Vida propia: parpadeo, sonrisa y un ritmo distinto para cada uno. */
+  nextBlink: number;
+  blinkUntil: number;
+  smileUntil: number;
+  phase: number;
 }
+
+// La mesa no está nunca quieta: se redibuja a este ritmo aunque nadie se mueva.
+const LIVELY_MS = 50;
+const BLINK_MS = 120;
+const SMILE_MS = 1800;
 
 /** Plano apoyado sobre la cabeza: la cara se ve bien también cuando la persona gira. */
 function curvedFace(): PlaneGeometry {
@@ -192,6 +202,8 @@ export class TableScene {
   private readonly heads: Head[];
   private headMesh: InstancedMesh;
   private bodies: InstancedMesh | null = null;
+  private breathing: number[] | null = null;
+  private readonly lively = setInterval(() => this.invalidate(), LIVELY_MS);
   private readonly sprites = new Map<string, CardSprite>();
   private myCards: CardId[] = [];
   private hovered = -1;
@@ -241,6 +253,7 @@ export class TableScene {
     const others = players - 1;
     this.heads = Array.from({ length: players }, () => ({
       yaw: 0, pitch: -0.2, targetYaw: 0, targetPitch: -0.2, face: NEUTRAL_FACE, faceTimer: null,
+      nextBlink: performance.now() + 1000 + Math.random() * 4000, blinkUntil: 0, smileUntil: 0, phase: Math.random() * 10,
     }));
 
     this.headMesh = new InstancedMesh(
@@ -474,6 +487,7 @@ export class TableScene {
       bodies.setMatrixAt(index, helper.matrix);
     });
     setCharacterInstances(bodies.geometry, looks, false);
+    this.breathing = seats;
 
     headModel.updateMatrix();
     const heads = new InstancedMesh(smoothNormals(headModel.geometry), characterMaterial(headModel.matrix), others.length);
@@ -503,7 +517,7 @@ export class TableScene {
   }
 
   private lookOf(seat: number) {
-    return appearanceFor(this.roomCode, seat, seat % 2 === this.me % 2);
+    return appearanceFor(this.roomCode, seat);
   }
 
   /** Posición relativa: yo siempre en el sur, y el siguiente asiento a mi derecha. */
@@ -777,23 +791,60 @@ export class TableScene {
     this.invalidate();
   }
 
-  private updateHeadMatrices(): void {
+  /** Su equipo ganó la mano: los personajes de ese equipo sonríen un momento. */
+  cheer(team: number): void {
+    const until = performance.now() + SMILE_MS;
+    for (const seat of this.otherSeats()) if (seat % 2 === team) this.heads[seat]!.smileUntil = until;
+    this.invalidate();
+  }
+
+  /** Respiración: el pecho sube y baja apenas, cada uno a su ritmo. */
+  private breath(seat: number, now: number): number {
+    return Math.sin(now / 1000 * 1.7 + this.heads[seat]!.phase);
+  }
+
+  private updateBodies(now: number): void {
+    if (!this.bodies || !this.breathing) return;
+    this.breathing.forEach((seat, index) => {
+      const pos = this.seatPosition(seat);
+      helper.position.set(pos.x, 0, pos.z);
+      helper.rotation.order = 'YXZ';
+      helper.rotation.set(0, this.seatAngle(seat) + Math.PI, 0);
+      helper.scale.set(1, 1 + 0.006 * this.breath(seat, now), 1);
+      helper.updateMatrix();
+      this.bodies!.setMatrixAt(index, helper.matrix);
+    });
+    this.bodies.instanceMatrix.needsUpdate = true;
+  }
+
+  private updateHeadMatrices(now = performance.now()): void {
     this.otherSeats().forEach((seat, index) => {
       const head = this.heads[seat]!;
       const pos = this.seatPosition(seat);
+      // Un vaivén chico encima de la mirada: nadie se queda clavado como una estatua.
+      const t = now / 1000 + head.phase;
+      const sway = 0.03 * Math.sin(t * 0.55) + 0.012 * Math.sin(t * 1.3);
+      const bob = 0.018 * Math.sin(t * 0.8) + 0.008 * Math.sin(t * 1.9);
+      const pitch = head.pitch + bob;
       // Mirar abajo se ve hasta cierto punto; el resto del recorrido queda solo en la dirección de la mirada.
-      const nod = head.pitch >= 0 ? head.pitch : -MAX_NOD * (1 - Math.exp(head.pitch / MAX_NOD));
+      const nod = pitch >= 0 ? pitch : -MAX_NOD * (1 - Math.exp(pitch / MAX_NOD));
       helper.rotation.order = 'YXZ';
-      helper.rotation.set(-nod, this.seatAngle(seat) + Math.PI - head.yaw, 0);
+      helper.rotation.set(-nod, this.seatAngle(seat) + Math.PI - head.yaw - sway, 0.02 * Math.sin(t * 0.4));
       helper.position.set(0, NECK_LENGTH, 0).applyEuler(helper.rotation);
       helper.position.x += pos.x;
-      helper.position.y += pos.y - NECK_LENGTH;
+      helper.position.y += pos.y - NECK_LENGTH + 0.005 * this.breath(seat, now);
       helper.position.z += pos.z;
       helper.scale.set(1, 1, 1);
       helper.updateMatrix();
       this.headMesh.setMatrixAt(index, helper.matrix);
       this.faces.mesh.setMatrixAt(index, helper.matrix);
-      this.faces.slots.setX(index, head.face);
+      // Las señas mandan; sin seña, parpadea y sonríe cuando corresponde.
+      if (now >= head.nextBlink) {
+        head.blinkUntil = now + BLINK_MS;
+        head.nextBlink = now + 2500 + Math.random() * 3500;
+      }
+      const resting = now < head.smileUntil ? SMILE_FACE : now < head.blinkUntil ? BLINK_FACE : NEUTRAL_FACE;
+      this.faces.slots.setX(index, head.face !== NEUTRAL_FACE ? head.face : resting);
     });
     this.headMesh.instanceMatrix.needsUpdate = true;
     this.faces.mesh.instanceMatrix.needsUpdate = true;
@@ -815,7 +866,9 @@ export class TableScene {
       head.yaw += dy * headEase;
       head.pitch += dp * headEase;
     }
-    this.updateHeadMatrices();
+    const now = performance.now();
+    this.updateHeadMatrices(now);
+    this.updateBodies(now);
 
     const cardEase = 1 - Math.exp(-dt * 11);
     let index = 0;
@@ -842,6 +895,7 @@ export class TableScene {
 
   dispose(): void {
     this.disposed = true;
+    clearInterval(this.lively);
     if (this.frame) cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();
     for (const head of this.heads) if (head.faceTimer) clearTimeout(head.faceTimer);

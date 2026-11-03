@@ -9,18 +9,16 @@ import {
   Vector3,
 } from 'three';
 
-const VARIANTS = 6;
+const VARIANTS = 8;
 const SKIN = [0xeec4a0, 0xe0ac84, 0xcc9268, 0xa9734e, 0x82563a, 0xf3d4b8];
-const DARK_HAIR = [0x1a110c, 0x2e1d14, 0x4a2e1b, 0x23201e];
+const DARK_HAIR = [0x1a110c, 0x2e1d14, 0x4a2e1b, 0x6a4a2c, 0x23201e];
 const GRAY_HAIR = [0x8c877e, 0xa8a399, 0x6f6b64];
-const WOMAN_HAIR = [0x1a110c, 0x3b2315, 0x6a3f22, 0x8a5a2c];
-const HATS = [0x2b2622, 0x4d4033, 0x25303d, 0x5e4f3b];
-const BERETS = [0x1d1a18, 0x2a3440, 0x45302a];
-const BELTS = [0x1c1612, 0x3b2a1e];
-const GARTERS = [0x1c1612, 0x7a6a4a];
-const EYES = [0x3a2212, 0x4c2f17, 0x2e1f14, 0x4a4f2c, 0x3f5260];
-const US = [0x2b6fa5, 0x2f7fb8, 0x245f8f];
-const THEM = [0xa03428, 0xaf4032, 0x8c2c22];
+const WOMAN_HAIR = [0x1a110c, 0x3b2315, 0x6a3f22, 0x8a5a2c, 0xa8804a];
+const TIES = [0x2a2230, 0x7a1f1a, 0x1f2a3a];
+// Ojos de muñeco: casi negros, con un matiz de color apenas.
+const EYES = [0x1c120c, 0x22160e, 0x1a1410, 0x1c1c16, 0x181c22];
+// Ropa de colores variados: el equipo se distingue por el cartel con el nombre, no por la ropa.
+const CLOTH = [0xd9a126, 0x3e8c5e, 0x6b4ea0, 0xe07a3c, 0x2aa6a0, 0xb5527a, 0x2f6f9e, 0xa8322a, 0x4a4a52, 0xc9b994];
 const GLOSS_LIPS = 0xa8302c;
 
 /** Proporciones de cada personaje: mandíbula, ancho y largo de la cara. */
@@ -31,6 +29,8 @@ const SHAPES: Record<number, [number, number, number]> = {
   4: [0.1, 0.05, -0.03],
   5: [-0.1, -0.05, -0.01],
   6: [0.03, 0.03, -0.02],
+  7: [-0.08, -0.04, 0.0],
+  8: [-0.06, -0.02, -0.02],
 };
 
 export interface Appearance {
@@ -51,21 +51,24 @@ function hash(text: string): number {
 }
 
 /** Todos ven a cada asiento igual: el aspecto sale del código de sala y del asiento. */
-export function appearanceFor(code: string, seat: number, myTeam: boolean): Appearance {
+export function appearanceFor(code: string, seat: number): Appearance {
   const base = hash(code);
   const pick = <T,>(list: readonly T[], salt: string) => list[hash(`${code}:${seat}:${salt}`) % list.length]!;
   // El orden de variantes se reparte por asiento para que no se repitan en la mesa.
   const variant = ((base + seat) % VARIANTS) + 1;
-  const hair = variant === 4 || variant === 6 ? GRAY_HAIR : variant === 5 ? WOMAN_HAIR : DARK_HAIR;
-  const accent = variant === 3 ? HATS : variant === 4 ? BERETS : variant === 6 ? GARTERS : BELTS;
+  const woman = variant === 5 || variant === 7 || variant === 8;
+  const hair = variant === 6 ? GRAY_HAIR : woman ? WOMAN_HAIR : DARK_HAIR;
+  // Hoy no hay accesorios de color propio: el lugar queda para la gomita del pelo.
+  const accent = TIES;
   const skin = new Color(pick(SKIN, 'skin'));
   return {
     skin,
     hair: new Color(pick(hair, 'hair')),
-    cloth: new Color(pick(myTeam ? US : THEM, 'cloth')),
+    // Cada asiento corre el color, así en una misma mesa no se repiten.
+    cloth: new Color(CLOTH[(base + seat * 3) % CLOTH.length]!),
     accent: new Color(pick(accent, 'accent')),
     eyes: new Color(pick(EYES, 'eyes')),
-    lips: variant === 5 ? new Color(GLOSS_LIPS) : skin.clone().multiply(new Color(0.62, 0.3, 0.27)),
+    lips: woman ? new Color(GLOSS_LIPS) : skin.clone().multiply(new Color(0.62, 0.3, 0.27)),
     shape: SHAPES[variant]!,
     variant,
   };
@@ -205,12 +208,13 @@ const VERTEX = /* glsl */ `
     vec3 tint = kind < 0.5 ? vec3(1.0) : kind < 1.5 ? aSkin : kind < 2.5 ? aHair : kind < 3.5 ? aCloth : aAccent;
     vBase = color.rgb * tint;
     // x: piel, y: brillo, z: dureza del brillo.
-    float hairGloss = abs(aVariant - 2.0) < 0.5 ? 0.5 : 0.14;
-    vMaterial = kind < 0.5 ? vec3(0.0, 0.06, 28.0)
-      : kind < 1.5 ? vec3(1.0, 0.07, 22.0)
-      : kind < 2.5 ? vec3(0.0, hairGloss, 34.0)
-      : kind < 3.5 ? vec3(0.0, 0.025, 12.0)
-      : vec3(0.0, 0.03, 14.0);
+    float hairGloss = 0.06;
+    // Acabado mate, como de plastilina: brillos anchos y suaves.
+    vMaterial = kind < 0.5 ? vec3(0.0, 0.04, 16.0)
+      : kind < 1.5 ? vec3(1.0, 0.04, 10.0)
+      : kind < 2.5 ? vec3(0.0, hairGloss, 12.0)
+      : kind < 3.5 ? vec3(0.0, 0.02, 8.0)
+      : vec3(0.0, 0.03, 10.0);
     vec4 world = place();
     // Todas las variantes viven en una geometría: las ajenas quedan fuera de pantalla.
     gl_Position = variant > 0.5 && abs(variant - aVariant) > 0.5

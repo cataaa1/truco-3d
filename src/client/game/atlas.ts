@@ -142,14 +142,17 @@ export function buildCardAtlas(): HTMLCanvasElement {
   return canvas;
 }
 
-export const FACE_GRID = { cols: 5, rows: 2 } as const;
+export const FACE_GRID = { cols: 6, rows: 2 } as const;
 export const NEUTRAL_FACE = 0;
+// Caras de vida propia, aparte de las señas: el parpadeo y la sonrisa.
+export const BLINK_FACE = 10;
+export const SMILE_FACE = 11;
 export const faceSlot = (id: SenaId): number => SENAS.findIndex((s) => s.id === id) + 1;
 const FACE = 256;
 const FACE_SCALE = 1.5;
 
-type Eye = 'open' | 'closed' | 'wink';
-type Mouth = 'neutral' | 'right' | 'left' | 'bite' | 'kiss' | 'open';
+type Eye = 'open' | 'closed' | 'wink' | 'blink' | 'happy';
+type Mouth = 'neutral' | 'right' | 'left' | 'bite' | 'kiss' | 'open' | 'grin';
 interface Expression {
   brows?: boolean;
   leftEye?: Eye;
@@ -158,7 +161,7 @@ interface Expression {
   nose?: boolean;
 }
 
-const EXPRESSIONS: Record<SenaId | 'neutral', Expression> = {
+const EXPRESSIONS: Record<SenaId | 'neutral' | 'blink' | 'smile', Expression> = {
   neutral: {},
   ancho_espada: { brows: true },
   // Mirando la cara de frente, su ojo derecho queda a la izquierda de la imagen.
@@ -170,6 +173,8 @@ const EXPRESSIONS: Record<SenaId | 'neutral', Expression> = {
   ancho_falso: { mouth: 'open' },
   nada: { leftEye: 'closed', rightEye: 'closed' },
   envido: { nose: true },
+  blink: { leftEye: 'blink', rightEye: 'blink' },
+  smile: { leftEye: 'happy', rightEye: 'happy', mouth: 'grin' },
 };
 
 /** Colores que el juego reemplaza por los de cada personaje; la guía usa los naturales. */
@@ -184,10 +189,11 @@ const NATURAL: FacePalette = { brows: '#35210f', iris: '#553518', lips: '#a8504a
 
 const LINE = '#241610';
 const SHADOW = '84,52,38';
-const EYE_Y = 110;
-const EYE_X = 52;
-const EYE_W = 23;
-const EYE_H = 11.5;
+const EYE_Y = 104;
+const EYE_X = 40;
+const EYE_W = 16;
+const EYE_H = 12;
+const BLUSH = '232,110,96';
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -205,60 +211,47 @@ function softSpot(ctx: CanvasRenderingContext2D, x: number, y: number, rx: numbe
   ctx.restore();
 }
 
-/** side: -1 a la izquierda de la imagen, 1 a la derecha. El lagrimal queda hacia la nariz. */
+/** side: -1 a la izquierda de la imagen, 1 a la derecha. Ojos grandes y redondos, con dos brillos. */
 function drawEye(ctx: CanvasRenderingContext2D, side: number, eye: Eye, palette: FacePalette): void {
   const x = 128 + side * EYE_X;
   const y = EYE_Y;
   const inner = x - side * EYE_W;
   const outer = x + side * EYE_W;
-  softSpot(ctx, x, y - 4, 34, 22, SHADOW, 0.3);
+  softSpot(ctx, x, y - 6, 30, 20, SHADOW, 0.1);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = LINE;
   if (eye === 'open') {
-    const almond = new Path2D();
-    almond.moveTo(inner, y + 2);
-    almond.bezierCurveTo(x - side * 10, y - EYE_H * 1.55, x + side * 12, y - EYE_H * 1.5, outer, y);
-    almond.bezierCurveTo(x + side * 10, y + EYE_H * 1.05, x - side * 10, y + EYE_H * 1.05, inner, y + 2);
-    ctx.save();
-    ctx.fillStyle = '#efe7da';
-    ctx.fill(almond);
-    ctx.clip(almond);
+    // Ojo de muñeco: un óvalo oscuro con un brillo, sin blanco alrededor.
     ctx.fillStyle = palette.iris;
     ctx.beginPath();
-    ctx.arc(x, y - 1, 11.5, 0, Math.PI * 2);
+    ctx.ellipse(x, y, 8.5, 11, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#0d0806';
+    ctx.fillStyle = 'rgba(10,6,4,0.55)';
     ctx.beginPath();
-    ctx.arc(x, y - 1, 5.2, 0, Math.PI * 2);
+    ctx.ellipse(x, y + 1, 5.5, 7.5, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = 'rgba(255,250,240,0.95)';
+    ctx.fillStyle = 'rgba(255,253,248,0.95)';
     ctx.beginPath();
-    ctx.arc(x - 3.5, y - 5, 2.4, 0, Math.PI * 2);
+    ctx.arc(x - 3, y - 4.5, 2.6, 0, Math.PI * 2);
     ctx.fill();
-    // El párpado le da sombra a la parte de arriba del ojo.
-    const lid = ctx.createLinearGradient(0, y - EYE_H, 0, y - 1);
-    lid.addColorStop(0, 'rgba(30,18,12,0.55)');
-    lid.addColorStop(1, 'rgba(30,18,12,0)');
-    ctx.fillStyle = lid;
-    ctx.fillRect(x - EYE_W - 2, y - EYE_H - 8, EYE_W * 2 + 4, EYE_H + 8);
-    ctx.restore();
-    ctx.lineWidth = 3.6;
+    return;
+  }
+  if (eye === 'happy') {
+    // Ojos que sonríen: medialunas hacia arriba.
+    ctx.lineWidth = 4.5;
     ctx.beginPath();
-    ctx.moveTo(inner, y + 2);
-    ctx.bezierCurveTo(x - side * 10, y - EYE_H * 1.55, x + side * 12, y - EYE_H * 1.5, outer + side * 2, y + 0.5);
+    ctx.moveTo(x - 11, y + 4);
+    ctx.quadraticCurveTo(x, y - 9, x + 11, y + 4);
     ctx.stroke();
-    ctx.strokeStyle = `rgba(${SHADOW},0.7)`;
-    ctx.lineWidth = 1.6;
+    return;
+  }
+  if (eye === 'blink') {
+    // Parpadeo: el párpado cerrado y relajado, sin las pestañas marcadas de la seña.
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.moveTo(outer, y + 1);
-    ctx.bezierCurveTo(x + side * 10, y + EYE_H * 1.05, x - side * 10, y + EYE_H * 1.05, inner, y + 2);
-    ctx.stroke();
-    // Pliegue del párpado.
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(inner + side * 3, y - 11);
-    ctx.quadraticCurveTo(x, y - 20, outer - side * 2, y - 8);
+    ctx.moveTo(x - 10, y + 1);
+    ctx.quadraticCurveTo(x, y + 7, x + 10, y + 1);
     ctx.stroke();
     return;
   }
@@ -294,50 +287,45 @@ function drawEye(ctx: CanvasRenderingContext2D, side: number, eye: Eye, palette:
 }
 
 function drawBrow(ctx: CanvasRenderingContext2D, side: number, raised: boolean, frown: boolean, color: string): void {
+  // Ceja fina en arco, como un trazo.
   const x = 128 + side * EYE_X;
-  const y = raised ? 56 : frown ? 88 : 80;
-  const inner = x - side * 27;
-  const outer = x + side * 29;
-  const innerDrop = frown ? 7 : raised ? 2 : 3;
-  ctx.fillStyle = color;
+  const y = raised ? 62 : frown ? 82 : 76;
+  ctx.strokeStyle = color;
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 6;
   ctx.beginPath();
-  ctx.moveTo(inner, y + innerDrop - 5);
-  ctx.quadraticCurveTo(x + side * 4, y - (raised ? 16 : 10), outer, y + 5);
-  ctx.quadraticCurveTo(x + side * 4, y - (raised ? 6 : 0), inner, y + innerDrop + 6);
-  ctx.closePath();
-  ctx.fill();
+  if (frown) {
+    ctx.moveTo(x - side * 14, y + 6);
+    ctx.quadraticCurveTo(x, y - 4, x + side * 16, y - 1);
+  } else {
+    ctx.moveTo(x - side * 15, y + 3);
+    ctx.quadraticCurveTo(x, y - (raised ? 12 : 8), x + side * 16, y + 3);
+  }
+  ctx.stroke();
 }
 
 function drawNose(ctx: CanvasRenderingContext2D, wrinkled: boolean): void {
-  // La forma es de verdad; acá van las sombras de las aletas y los orificios.
-  for (const side of [-1, 1]) softSpot(ctx, 128 + side * 15, 140, 7, 26, SHADOW, 0.26);
-  softSpot(ctx, 128 - 12, 168, 10, 8, SHADOW, 0.4);
-  softSpot(ctx, 128 + 12, 168, 10, 8, SHADOW, 0.4);
-  ctx.fillStyle = 'rgba(46,24,16,0.8)';
-  for (const side of [-1, 1]) {
-    ctx.beginPath();
-    ctx.ellipse(128 + side * 8, wrinkled ? 170 : 174, 4.4, 2.4, side * 0.3, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  // La nariz es la bolita del modelo: acá solo va la sombra de abajo.
+  softSpot(ctx, 128, 160, 15, 6, SHADOW, 0.18);
   if (!wrinkled) return;
-  // Nariz fruncida: arrugas marcadas sobre el tabique y a los costados.
+  // Nariz fruncida: arrugas marcadas sobre el puente y a los costados.
   ctx.strokeStyle = 'rgba(52,28,18,0.9)';
   ctx.lineCap = 'round';
   ctx.lineWidth = 3;
   ctx.beginPath();
-  for (const [y, half] of [[118, 11], [127, 14], [136, 16]] as const) {
+  for (const [y, half] of [[112, 9], [121, 12], [130, 14]] as const) {
     ctx.moveTo(128 - half, y + 3);
     ctx.quadraticCurveTo(128, y - 4, 128 + half, y + 3);
   }
   for (const side of [-1, 1]) {
-    ctx.moveTo(128 + side * 20, 146);
-    ctx.quadraticCurveTo(128 + side * 26, 158, 128 + side * 24, 172);
+    ctx.moveTo(128 + side * 20, 140);
+    ctx.quadraticCurveTo(128 + side * 26, 150, 128 + side * 24, 160);
   }
   ctx.stroke();
 }
 
 function drawMouth(ctx: CanvasRenderingContext2D, mouth: Mouth, palette: FacePalette): void {
-  const y = 209;
+  const y = 196;
   const lips = (points: () => void, color: string) => {
     ctx.fillStyle = color;
     ctx.beginPath();
@@ -355,21 +343,42 @@ function drawMouth(ctx: CanvasRenderingContext2D, mouth: Mouth, palette: FacePal
   };
   softSpot(ctx, 128, y + 21, 26, 7, SHADOW, 0.34);
   switch (mouth) {
-    case 'neutral':
-      lips(() => {
-        ctx.moveTo(128 - 26, y);
-        ctx.quadraticCurveTo(128 - 12, y - 8, 128 - 3, y - 6);
-        ctx.quadraticCurveTo(128, y - 4, 128 + 3, y - 6);
-        ctx.quadraticCurveTo(128 + 12, y - 8, 128 + 26, y);
-      }, palette.lipsDark);
-      lips(() => {
-        ctx.moveTo(128 - 26, y);
-        ctx.quadraticCurveTo(128, y + 13, 128 + 26, y);
-      }, palette.lips);
+    case 'neutral': {
+      // Sonrisa abierta de muñeco: medialuna ancha, del ancho de los ojos, con los dientes de arriba.
+      ctx.fillStyle = '#5a1a14';
+      ctx.beginPath();
+      ctx.moveTo(128 - 40, y - 10);
+      ctx.quadraticCurveTo(128, y - 3, 128 + 40, y - 10);
+      ctx.quadraticCurveTo(128, y + 30, 128 - 40, y - 10);
+      ctx.fill();
+      ctx.save();
+      ctx.clip();
+      ctx.fillStyle = '#fbf8f1';
+      ctx.fillRect(128 - 40, y - 14, 80, 15);
+      ctx.restore();
+      break;
+    }
+    case 'grin':
+      // Sonrisa abierta, con los dientes de arriba.
+      ctx.fillStyle = '#4a1712';
+      ctx.beginPath();
+      ctx.moveTo(128 - 30, y - 8);
+      ctx.quadraticCurveTo(128, y - 2, 128 + 30, y - 8);
+      ctx.quadraticCurveTo(128, y + 30, 128 - 30, y - 8);
+      ctx.fill();
+      ctx.save();
+      ctx.clip();
+      ctx.fillStyle = '#f6f1e6';
+      ctx.fillRect(128 - 30, y - 10, 60, 11);
+      ctx.fillStyle = palette.lips;
+      ctx.beginPath();
+      ctx.ellipse(128, y + 19, 15, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
       seam(() => {
-        ctx.moveTo(128 - 27, y);
-        ctx.quadraticCurveTo(128, y + 2, 128 + 27, y);
-      });
+        ctx.moveTo(128 - 30, y - 8);
+        ctx.quadraticCurveTo(128, y + 30, 128 + 30, y - 8);
+      }, 2.2);
       break;
     case 'left': // Su izquierda, a la derecha de la imagen.
     case 'right': {
@@ -462,23 +471,13 @@ export function buildFaceAtlas(palette: FacePalette = KEYED): HTMLCanvasElement 
   canvas.height = FACE_GRID.rows * FACE * FACE_SCALE;
   const ctx = canvas.getContext('2d')!;
   ctx.scale(FACE_SCALE, FACE_SCALE);
-  const ids: (SenaId | 'neutral')[] = ['neutral', ...SENAS.map((s) => s.id)];
+  const ids: (SenaId | 'neutral' | 'blink' | 'smile')[] = ['neutral', ...SENAS.map((s) => s.id), 'blink', 'smile'];
   ids.forEach((id, slot) => {
     const expression = EXPRESSIONS[id];
     ctx.save();
     ctx.translate((slot % FACE_GRID.cols) * FACE, Math.floor(slot / FACE_GRID.cols) * FACE);
-    // Hueco bajo los pómulos.
-    for (const side of [-1, 1]) softSpot(ctx, 128 + side * 74, 192, 26, 34, SHADOW, 0.08);
-    // Surco que baja de la nariz a la boca.
-    ctx.strokeStyle = `rgba(${SHADOW},0.11)`;
-    ctx.lineWidth = 3.4;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    for (const side of [-1, 1]) {
-      ctx.moveTo(128 + side * 22, 178);
-      ctx.quadraticCurveTo(128 + side * 33, 192, 128 + side * 34, 206);
-    }
-    ctx.stroke();
+    // Rubor en los cachetes: cara sana y amable.
+    for (const side of [-1, 1]) softSpot(ctx, 128 + side * 58, 158, 20, 13, BLUSH, id === 'smile' ? 0.24 : 0.12);
     for (const side of [-1, 1]) drawBrow(ctx, side, Boolean(expression.brows), Boolean(expression.nose), palette.brows);
     drawEye(ctx, -1, expression.rightEye ?? 'open', palette);
     drawEye(ctx, 1, expression.leftEye ?? 'open', palette);

@@ -40,7 +40,7 @@ const only = number('only', 0);
 const variants = only ? [only] : [1, 2, 3, 4, 5, 6];
 const looks = variants.map((variant, i) => {
   for (let tries = 0; ; tries++) {
-    const look = appearanceFor(`${params.get('code') ?? 'demo'}${tries}`, i, i % 2 === 0);
+    const look = appearanceFor(`${params.get('code') ?? 'demo'}${tries}`, i);
     if (look.variant === variant) return look;
   }
 });

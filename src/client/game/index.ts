@@ -229,6 +229,7 @@ export function mountGame(
         note(`Flor: +${event.points} ${teamLabel(event.team)}`, true);
         break;
       case 'hand':
+        scene.cheer(event.team);
         if (trucoSung) note(`Truco: +${event.points} ${teamLabel(event.team)}`, true);
         trucoSung = false;
         maybeBanter(event.team, event.points);

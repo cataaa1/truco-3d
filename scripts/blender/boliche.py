@@ -13,17 +13,21 @@ import bmesh
 import bpy
 import numpy as np
 
-args = sys.argv[sys.argv.index("--") + 1 :]
-OUT = Path(args[0])
-ATLAS_FILE = Path(args[1])
-LIGHT_FILE = Path(args[2]).resolve()
-PROPS_FILE = Path(args[3]).resolve()
+# Corrido por npm run models recibe las rutas de salida. Importado desde otro script (por ejemplo,
+# para mirar los personajes en Blender por el MCP) solo hace falta el atlas, que se busca en el repo.
+HERE = Path(__file__).resolve().parent
+args = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
+ATLAS_FILE = Path(args[1]) if len(args) > 1 else HERE.parent.parent / "src/client/game/assets/room-atlas.json"
+if len(args) > 5:
+    OUT = Path(args[0])
+    LIGHT_FILE = Path(args[2]).resolve()
+    PROPS_FILE = Path(args[3]).resolve()
+    BOTTLES_FILE = Path(args[4]).resolve()
+    BOTTLES_JSON = Path(args[5]).resolve()
 PROPS_SIZE = int(os.environ.get("PROPS_SIZE", 2048))
-BOTTLES_FILE = Path(args[4]).resolve()
-BOTTLES_JSON = Path(args[5]).resolve()
 # Las botellas se arman una vez por tipo lejos del salón y el juego las repite donde van.
 CATALOG_X = 30.0
-sys.path.append(str(Path(__file__).resolve().parent))
+sys.path.append(str(HERE))
 import utileria  # noqa: E402
 
 BAKE_SIZE = int(os.environ.get("BAKE_SIZE", 2048))
@@ -1217,7 +1221,7 @@ def catmull(path, radii, steps, closed=False):
 
 # ---- Cabeza ----
 # El centro de la cabeza es el ojo de la cámara. Adelante es +z.
-HEAD_RX, HEAD_RY, HEAD_RZ = 0.128, 0.162, 0.148
+HEAD_RX, HEAD_RY, HEAD_RZ = 0.118, 0.17, 0.136
 HEAD_CENTER = (0.0, 0.0, -0.008)
 # La cara pintada cubre este medio ancho alrededor del centro; coincide con el dibujo de atlas.ts.
 FACE_HALF = 0.13
@@ -1228,28 +1232,22 @@ def head_point(lon, lat):
     x = HEAD_RX * cos_lat * math.sin(lon)
     y = HEAD_RY * math.sin(lat)
     z = HEAD_RZ * cos_lat * math.cos(lon)
-    low = smooth(-0.05, -0.165, y)
-    x *= (1 - 0.34 * low) * (1 + 0.03 * smooth(0.02, 0.12, y))
-    # Quijada: la parte baja de la cara se mantiene ancha antes de cerrar en el mentón.
-    x *= 1 + 0.05 * bell(0, y, 0, -0.1, 1, 0.04)
+    low = smooth(-0.05, -0.16, y)
+    # Cara redonda: el mentón cierra suave y los cachetes quedan llenos.
+    # Óvalo alargado: la mandíbula baja recta y cierra en un mentón redondo.
+    x *= (1 - 0.18 * low) * (1 + 0.02 * smooth(0.02, 0.12, y))
+    x *= 1 + 0.06 * bell(0, y, 0, -0.08, 1, 0.06)
     if z < 0:
         z *= (1 + 0.1 * smooth(-0.02, 0.08, y)) * (1 - 0.42 * low)
     else:
         z *= 1 - 0.1 * low
     side = abs(x)
+    # Cara lisa de muñeco: solo una nariz de bolita y apenas el mentón.
     relief = (
-        0.006 * bell(side, y, 0.03, 0.05, 0.06, 0.016)     # Arco de las cejas.
-        - 0.013 * bell(side, y, 0.053, 0.018, 0.028, 0.017)  # Cuencas de los ojos.
-        + 0.007 * bell(side, y, 0.085, -0.03, 0.04, 0.03)    # Pómulos.
-        + 0.012 * bell(x, y, 0, 0.012, 0.011, 0.03)          # Tabique.
-        + 0.029 * bell(x, y, 0, -0.033, 0.016, 0.023)        # Nariz.
-        + 0.012 * bell(x, y, 0, -0.043, 0.011, 0.011)        # Punta.
-        + 0.009 * bell(side, y, 0.017, -0.05, 0.008, 0.008)  # Aletas.
-        - 0.004 * bell(x, y, 0, -0.067, 0.02, 0.007)         # Bajo la nariz.
-        + 0.006 * bell(x, y, 0, -0.083, 0.03, 0.012)         # Labios.
-        - 0.005 * bell(x, y, 0, -0.106, 0.032, 0.007)        # Bajo el labio.
-        + 0.009 * bell(x, y, 0, -0.13, 0.032, 0.018)         # Mentón.
-        - 0.004 * bell(side, y, 0.115, 0.05, 0.02, 0.05)     # Sienes.
+        0.016 * bell(x, y, 0, -0.03, 0.017, 0.017)          # Nariz redonda.
+        + 0.004 * bell(side, y, 0.07, -0.04, 0.05, 0.04)     # Cachetes.
+        + 0.016 * bell(x, y, 0, -0.142, 0.036, 0.022)        # Pera: el mentón marcado y hacia adelante.
+        - 0.004 * bell(x, y, 0, -0.112, 0.03, 0.008)         # Hoyito entre la boca y la pera.
     )
     z += relief * smooth(0.02, 0.09, z)
     return (x + HEAD_CENTER[0], y + HEAD_CENTER[1], z + HEAD_CENTER[2])
@@ -1301,7 +1299,7 @@ def keyed(*keys):
     return line
 
 
-def hair_cap(head, low, thick, top=lambda lon: math.radians(89), lon0=-180, lon1=180, nu=84, nv=16, fade=True, roll=0.0, grain=0.14):
+def hair_cap(head, low, thick, top=lambda lon: math.radians(89), lon0=-180, lon1=180, nu=64, nv=14, fade=True, roll=0.0, grain=0.0):
     """Pelo que nace en una línea continua y se apoya sobre el cráneo: no quedan bordes en escalera."""
     a, b = math.radians(lon0), math.radians(lon1)
 
@@ -1365,110 +1363,161 @@ def build_head():
         head.ellipsoid(center, (0.015, 0.04, 0.026), ear_tint, segments=12, rings=9)
 
     short_line = keyed((0, 38), (32, 33), (58, 18), (78, -6), (98, -8), (125, -22), (180, -30))
+    # Altura (latitud) desde la que el pelo de arriba gana volumen sobre los costados rebajados.
+    top_volume = lambda lat: smooth(math.radians(28), math.radians(62), lat)
 
-    # 1. Raya al costado, peinado de oficina.
+    # 1. Corte corto actual: costados rebajados y volumen arriba, peinado hacia adelante.
     head.use(Figure.HAIR, 1)
-    part = math.radians(32)
+    fade_line = keyed((0, 38), (30, 34), (58, 20), (78, 2), (98, -2), (125, -18), (180, -26))
 
-    def parted(lon, lat, v):
-        groove = 1 - 0.75 * math.exp(-(((lon - part) / 0.085) ** 2)) * smooth(0, 0.25, v)
-        volume = 0.016 + 0.009 * smooth(0.0, -1.2, lon - part) * smooth(0.0, 0.5, v)
-        return volume * groove
+    def modern(lon, lat, v):
+        # Copete con volumen hacia adelante, como un bloque de plastilina.
+        forward = 0.016 * smooth(math.radians(100), 0.0, abs(lon))
+        return 0.008 + (0.03 + forward) * top_volume(lat)
 
-    hair_cap(head, short_line, parted)
-    head.use(Figure.HAIR)
-    moustache(head, 0.05, -0.0605, -0.0675, -0.007, 0.0028, split=1.0)
+    hair_cap(head, fade_line, modern)
 
-    # 2. A la gomina, tirante hacia atrás y con entradas.
+    # 2. Rulos con volumen y barba corta.
     head.use(Figure.HAIR, 2)
-    slick_line = keyed((0, 43), (14, 46), (34, 36), (58, 19), (78, -5), (98, -8), (125, -22), (180, -32))
+    curl_line = keyed((0, 36), (30, 32), (58, 16), (78, -6), (98, -10), (125, -24), (180, -32))
 
-    def slick(lon, lat, v):
-        return 0.013 + 0.012 * smooth(0.0, 0.45, v) * smooth(math.pi, 0.2, abs(lon)) + 0.0014 * math.sin(lon * 34)
+    def curls(lon, lat, v):
+        # Rulos grandes y redondeados, sin detalle fino.
+        bumps = 0.007 * math.sin(lon * 7 + lat * 4) * math.sin(lat * 8 - lon * 3)
+        return 0.028 + 0.016 * top_volume(lat) + bumps
 
-    hair_cap(head, slick_line, slick, grain=0.22)
+    hair_cap(head, curl_line, curls)
+    beard(head, full=False)
 
-    # 3. Sombrero de ala, el de los retratos de Gardel.
+    # 3. Raya al costado con volumen, peinado hacia un lado.
     head.use(Figure.HAIR, 3)
-    under_hat = lambda lon: math.radians(42)
-    hair_cap(head, short_line, lambda lon, lat, v: 0.011, top=under_hat, nv=8)
-    head.use(Figure.ACCENT)
+    side_part = math.radians(-34)
 
-    def hat(u, v):
-        # El perfil va del borde del ala a la copa; se recorre de afuera hacia arriba.
-        lon = 2 * math.pi * u
-        s, c = math.sin(lon), math.cos(lon)
-        profile = [(1.0, -0.004), (1.015, 0.002), (0.98, 0.007), (0.64, 0.009), (0.61, 0.05), (0.57, 0.135), (0.46, 0.158), (0.2, 0.152), (0.0, 0.14)]
-        t = v * (len(profile) - 1)
-        index = min(int(t), len(profile) - 2)
-        r = lerp(profile[index][0], profile[index + 1][0], t - index)
-        h = lerp(profile[index][1], profile[index + 1][1], t - index)
-        brim = smooth(0.64, 1.0, r)
-        crown = smooth(0.02, 0.12, h) * (1 - brim)
-        # El ala baja adelante y sube a los costados; la copa se aprieta arriba al frente y se hunde al medio.
-        y = 0.104 + h - 0.018 * brim * max(0.0, c) ** 2 + 0.014 * brim * s * s
-        y -= 0.022 * crown * math.exp(-((r * s / 0.16) ** 2)) * smooth(0.6, 0.2, r)
-        pinch = 1 - 0.2 * crown * max(0.0, c) ** 2
-        return (0.21 * r * s * pinch, y, -0.008 + 0.232 * r * c)
+    def swept(lon, lat, v):
+        groove = 1 - 0.7 * math.exp(-(((lon - side_part) / 0.08) ** 2)) * smooth(0.0, 0.3, v)
+        lift = 0.012 * smooth(side_part, side_part + 1.6, lon) * top_volume(lat)
+        return (0.01 + 0.02 * top_volume(lat) + lift) * groove
 
-    head.grid(hat, 32, 32, lambda p: scale(WHITE, 0.82 + 0.18 * smooth(0.11, 0.22, p[1])))
-    head.use(Figure.FIXED)
+    hair_cap(head, short_line, swept)
 
-    def band(u, v):
-        lon = 2 * math.pi * u
-        y = lerp(0.114, 0.146, v)
-        k = 0.21 * lerp(0.637, 0.618, v) + 0.0015
-        return (k * math.sin(lon), y, -0.008 + k * 1.105 * math.cos(lon))
-
-    head.grid(band, 28, 2, srgb(0x17110d))
-
-    # 4. Boina y bigote de almacenero.
+    # 4. Rapado con barba completa.
     head.use(Figure.HAIR, 4)
-    hair_cap(head, short_line, lambda lon, lat, v: 0.01, top=under_hat, nv=8)
-    moustache(head, 0.05, -0.055, -0.074, 0.008, 0.008)
-    head.use(Figure.ACCENT)
+    hair_cap(head, short_line, lambda lon, lat, v: 0.004)
+    beard(head, full=True)
 
-    def beret(u, v):
-        lon = 2 * math.pi * u
-        s, c = math.sin(lon), math.cos(lon)
-        # Se desinfla hacia un costado, como se usa.
-        angle = v * math.pi * 0.5
-        outer = lerp(0.128, 0.178, smooth(0.0, 0.3, v)) * math.cos(angle * 0.92) ** 0.75
-        y = 0.106 + 0.082 * math.sin(angle) ** 0.85 - 0.016 * s * smooth(0.1, 0.5, v)
-        return (0.008 + outer * s, y, -0.012 + outer * 1.08 * c)
-
-    head.grid(beret, 30, 12, lambda p: scale(WHITE, 0.82 + 0.18 * smooth(0.11, 0.18, p[1])))
-    head.sweep([(0.012, 0.18, -0.012), (0.012, 0.205, -0.012)], [0.008, 0.006], segments=6, smooth_steps=1)
-
-    # 5. Melena corta a la mandíbula, redondeada y con el remate hacia adentro.
+    # 5. Pelo largo y lacio con raya al costado: mechones que caen hasta el pecho.
     head.use(Figure.HAIR, 5)
-    bob_line = keyed((0, 40), (22, 37), (46, 24), (66, 0), (84, -36), (110, -44), (180, -46))
+    long_line = keyed((0, 40), (20, 36), (44, 22), (66, 0), (84, -30), (110, -45), (180, -50))
+    hair_cap(head, long_line, lambda lon, lat, v: 0.012, fade=False)
+    long_locks(head, part=math.radians(28), length=-0.3, seed=5)
 
-    def bob(lon, lat, v):
-        return 0.021 + 0.022 * smooth(0.5, -0.7, lat)
-
-    hair_cap(head, bob_line, bob, fade=False, roll=0.012, grain=0.16)
-
-    # 6. Pelado con los costados canosos y anteojos redondos.
+    # 6. Canoso, corto y prolijo.
     head.use(Figure.HAIR, 6)
-    ring_low = keyed((0, 8), (62, 8), (80, -8), (110, -14), (180, -26))
-    ring_top = keyed((0, 8), (62, 12), (80, 22), (112, 36), (180, 42))
-    hair_cap(head, ring_low, lambda lon, lat, v: 0.013, top=ring_top, lon0=-180, lon1=180, nv=8, grain=0.2)
-    head.use(Figure.FIXED)
-    GOLD = srgb(0xa98a4a)
-    for side in (-1, 1):
-        ring = []
-        for step in range(18):
-            angle = 2 * math.pi * step / 18
-            x, y = side * 0.053 + 0.03 * math.cos(angle), 0.018 + 0.027 * math.sin(angle)
-            p = surface_at(x, y)
-            ring.append((p[0], p[1], max(p[2], surface_at(side * 0.053, 0.03)[2]) + 0.012))
-        head.sweep(ring, [0.0026] * 18, GOLD, segments=5, smooth_steps=1, closed=True)
-        p = surface_at(side * 0.083, 0.02)
-        head.sweep([(p[0], p[1], p[2] + 0.012), (side * 0.128, 0.022, 0.05), (side * 0.134, 0.02, -0.02)], [0.0022] * 3, GOLD, segments=5, smooth_steps=3)
-    nose = surface_at(0, 0.024)
-    head.sweep([(-0.024, 0.024, nose[2] + 0.004), (0, 0.03, nose[2] + 0.006), (0.024, 0.024, nose[2] + 0.004)], [0.0024] * 3, GOLD, segments=5, smooth_steps=3)
+
+    def neat(lon, lat, v):
+        return 0.012 + 0.016 * top_volume(lat)
+
+    hair_cap(head, short_line, neat)
+
+    # 7. Cola de caballo: tirante hacia atrás, con la gomita y la cola que cae por la espalda.
+    head.use(Figure.HAIR, 7)
+    pulled_line = keyed((0, 42), (24, 38), (50, 24), (70, 4), (90, -12), (130, -26), (180, -30))
+    hair_cap(head, pulled_line, lambda lon, lat, v: 0.008 + 0.004 * top_volume(lat), grain=0.0)
+    ponytail(head)
+
+    # 8. Rulos largos con mucho volumen.
+    head.use(Figure.HAIR, 8)
+    curly_line = keyed((0, 38), (20, 34), (44, 20), (66, 0), (84, -30), (110, -45), (180, -50))
+
+    def curly(lon, lat, v):
+        return 0.03 + 0.008 * math.sin(lon * 9 + lat * 5) * math.sin(lat * 9 - lon * 4)
+
+    hair_cap(head, curly_line, curly, fade=False)
+    long_locks(head, part=0.0, length=-0.27, seed=8, curl=0.014, count=34, width=0.016)
     return head
+
+
+def beard(head, full):
+    """Barba que rodea la mandíbula; la boca queda libre para que se lean los gestos."""
+    bottom = lambda lon: math.radians(-86)
+    if full:
+        top = keyed((0, -33), (16, -30), (40, -20), (64, -8), (84, 4), (96, 12))
+        thick = lambda lon, lat, v: 0.008 + 0.012 * math.sin(math.pi * min(1.0, v * 1.4)) ** 0.7
+    else:
+        top = keyed((0, -35), (18, -33), (40, -24), (64, -12), (84, 2), (96, 8))
+        thick = lambda lon, lat, v: 0.005 + 0.007 * math.sin(math.pi * min(1.0, v * 1.4)) ** 0.7
+    hair_cap(head, bottom, thick, top=top, lon0=-98, lon1=98, nu=40, nv=12)
+    # Bigote que se une a la barba a los costados de la boca.
+    moustache(head, 0.05, -0.05, -0.062, 0.006, 0.007 if full else 0.005)
+
+
+def scalp(lon, lat, off):
+    p = head_point(lon, lat)
+    n = outward(p)
+    return tuple(p[k] + n[k] * off for k in range(3))
+
+
+def long_locks(head, part, length, seed, curl=0.0, count=44, width=0.012):
+    """Pelo largo de verdad: cada mechón nace en la raya, sigue el cráneo y cae con su propio peso.
+    Los de adelante enmarcan la cara y ninguno pasa por delante de ella."""
+    rng = random.Random(seed)
+    for index in range(count):
+        # Hacia dónde baja el mechón: de un costado de la cara, por atrás, hasta el otro costado.
+        t = (index + rng.uniform(-0.3, 0.3)) / (count - 1)
+        lon_end = math.radians(lerp(72, 288, t))
+        lon_end = math.atan2(math.sin(lon_end), math.cos(lon_end))
+        lon_start = part + rng.uniform(-0.05, 0.05)
+        # Los de los costados bajan por la sien; los de atrás, por la nuca.
+        lat_end = math.radians(lerp(-4, -22, abs(math.sin(lon_end / 2)) ** 2))
+        off = 0.014 + 0.006 * rng.random()
+        points = []
+        for step in range(7):
+            k = step / 6
+            lon = lon_start + (lon_end - lon_start) * smooth(0.0, 1.0, k)
+            lat = lerp(math.radians(80), lat_end, k ** 0.8)
+            points.append(scalp(lon, lat, off + 0.004 * math.sin(math.pi * k)))
+        root = points[-1]
+        flat_dir = normalize((root[0] - HEAD_CENTER[0], 0.0, root[2] - HEAD_CENTER[2]))
+        drop = length * rng.uniform(0.9, 1.08) if abs(lon_end) > math.radians(100) else length * 0.88
+        for step in range(1, 8):
+            k = step / 7
+            out = 0.012 + 0.03 * smooth(0.0, 0.6, k)
+            spin = curl * math.sin(k * 16 + index)
+            side = (-flat_dir[2], 0.0, flat_dir[0])
+            points.append((
+                root[0] + flat_dir[0] * out + side[0] * spin,
+                lerp(root[1], drop, k),
+                root[2] + flat_dir[2] * out + side[2] * spin + curl * math.cos(k * 16 + index) * 0.5,
+            ))
+        radii = [width * 0.7] + [width] * 6 + [width * lerp(1.0, 0.25, step / 7) for step in range(1, 8)]
+        shade = rng.uniform(0.86, 1.08)
+        # Cinco lados alcanzan: el mechón es chato y se ve de lejos.
+        head.sweep(points, radii, scale(WHITE, shade), segments=5, smooth_steps=2, flat=0.55)
+
+
+def ponytail(head):
+    """Gomita en la nuca y la cola, hecha de mechones que se abren apenas al caer."""
+    tie = scalp(math.pi, math.radians(8), 0.006)
+    ring = [tuple(tie[k] + (0.014 * math.cos(a), 0.014 * math.sin(a), 0.0)[k] for k in range(3)) for a in [2 * math.pi * i / 12 for i in range(12)]]
+    head.use(Figure.FIXED)
+    head.sweep(ring, [0.0065] * 12, srgb(0x2a2230), segments=6, smooth_steps=1, closed=True)
+    head.use(Figure.HAIR)
+    rng = random.Random(7)
+    # Mechones gruesos que salen apretados de la gomita, se abren un poco y vuelven a juntarse en la punta.
+    for index in range(12):
+        a = 2 * math.pi * index / 12
+        r = 0.008 * rng.uniform(0.6, 1.0)
+        start = (tie[0] + r * math.cos(a), tie[1] + r * math.sin(a), tie[2] + 0.004)
+        spread = (0.012 * math.cos(a), 0.008 * math.sin(a))
+        sway = rng.uniform(-0.01, 0.01)
+        points = [
+            start,
+            (start[0] + spread[0] * 0.8, tie[1] - 0.02 + spread[1], tie[2] - 0.03),
+            (start[0] + spread[0] * 1.3 + sway, tie[1] - 0.09 + spread[1], tie[2] - 0.055),
+            (start[0] + spread[0] * 0.9 + sway * 1.5, tie[1] - 0.17, tie[2] - 0.05),
+            (start[0] * 0.98 + sway * 2, tie[1] - 0.22, tie[2] - 0.035),
+        ]
+        head.sweep(points, [0.011, 0.016, 0.015, 0.009, 0.003], scale(WHITE, rng.uniform(0.88, 1.06)), segments=7, smooth_steps=3, flat=0.75)
 
 
 def build_face():
@@ -1498,9 +1547,6 @@ def build_face():
 SHIRT = srgb(0xe4dccb)
 PANTS = srgb(0x2c2622)
 SHOE = srgb(0x1a120c)
-TIE = srgb(0x5e1a18)
-INK = srgb(0x171310)
-PEARL = srgb(0xe9e0cf)
 BUTTON = srgb(0x2a201a)
 
 # (altura, ancho, profundidad, centro en z)
@@ -1585,12 +1631,14 @@ def garment(body, table, y0, y1, opening, armhole=None, off=0.004):
 
 def neck(body, radius):
     body.use(Figure.SKIN)
+    # Cuello largo y fino, como en las ilustraciones de muñecos.
+    radius *= 0.82
     # Sube hasta adentro de la cabeza; la parte alta queda en la sombra del mentón.
     body.sweep([(0, 1.0, -0.016), (0, 1.1, -0.014), (0, 1.17, -0.012)], [radius * 1.28, radius, radius * 0.98], lambda p: scale(WHITE, 0.66 + 0.14 * smooth(1.02, 1.04, p[1])), segments=14, smooth_steps=2)
 
 
-def shirt_collar(body, table, tint=SHIRT):
-    body.use(Figure.FIXED)
+def shirt_collar(body, table, tint=SHIRT, kind=Figure.FIXED):
+    body.use(kind)
     body.sweep([(0, 1.0, -0.017), (0, 1.058, -0.016)], [0.076, 0.069], tint, segments=16, smooth_steps=2)
     for side in (-1, 1):
         a = (side * 0.008, 1.06, 0.052)
@@ -1605,29 +1653,6 @@ def shirt_collar(body, table, tint=SHIRT):
         low = (a, b, shadow[0], shadow[1]) if side > 0 else (b, a, shadow[1], shadow[0])
         body.grid(wing(low, -0.003), 3, 3, scale(tint, 0.62))
         body.grid(wing(order), 3, 3, tint)
-
-
-def necktie(body, table, y_low, color=TIE):
-    body.use(Figure.FIXED)
-    width = lambda y: lerp(0.024, 0.014, smooth(y_low, 0.975, y))
-    front_patch(body, table, y_low, 0.975, lambda y: -width(y), lambda y: width(y), 0.006, color, rows=6, cols=2)
-    # Nudo: más ancho arriba, con volumen y un poco más oscuro en los bordes.
-    knot_width = lambda y: lerp(0.012, 0.021, smooth(0.962, 0.992, y))
-
-    def knot(u, v):
-        y = lerp(0.962, 0.994, v)
-        x = lerp(-knot_width(y), knot_width(y), u)
-        return front(table, x, y, 0.009 + 0.007 * math.sin(math.pi * u) * math.sin(math.pi * v) ** 0.5)
-
-    body.grid(knot, 6, 4, scale(color, 1.12))
-
-
-def bow_tie(body, table, color=INK):
-    body.use(Figure.FIXED)
-    center = front(table, 0, 0.995, 0.018)
-    for side in (-1, 1):
-        body.ellipsoid((side * 0.033, center[1], center[2]), (0.03, 0.021, 0.009), color, segments=10, rings=6)
-    body.ellipsoid(center, (0.011, 0.012, 0.012), color, segments=8, rings=5)
 
 
 def buttons(body, table, ys, x=0.0, color=BUTTON):
@@ -1715,18 +1740,35 @@ def hand(body, side):
     body.ellipsoid(nail, (0.0078, 0.0086, 0.0034), (1.12, 1.02, 0.98), segments=9, rings=5)
 
 
-def lapels(body, table, y_low, opening, tint):
-    """Solapas con muesca, apoyadas sobre el saco."""
-    for side in (-1, 1):
-        inner = lambda y, s=side: s * opening(y)
+def sleeve(body, side, upto, tint=WHITE, shrink=1.04, table_scale=1.0, hem=0.0):
+    """Manga sobre el brazo hasta el punto upto del recorrido (0 es el hombro); hem marca el dobladillo."""
+    path = arm_path(side, table_scale)
+    whole = int(upto)
+    points = path[: whole + 1]
+    radii = [r * shrink for r in ARM_RADII[: whole + 1]]
+    if upto > whole:
+        t = upto - whole
+        points.append(tuple(lerp(path[whole][k], path[whole + 1][k], t) for k in range(3)))
+        radii.append(lerp(ARM_RADII[whole], ARM_RADII[whole + 1], t) * shrink)
+    root = (path[0][0] - side * 0.05, path[0][1] + 0.022, path[0][2])
+    body.sweep([root, *points], [radii[0] * 0.8, *radii], tint, segments=16, smooth_steps=3)
+    if hem:
+        a, b = points[-2], points[-1]
+        back = tuple(lerp(b[k], a[k], min(1.0, hem / max(1e-6, math.dist(a, b)))) for k in range(3))
+        body.sweep([back, b], [radii[-1] * 1.05, radii[-1] * 1.05], scale(tint, 0.86), segments=16, smooth_steps=1)
 
-        def outer(y, s=side):
-            width = lerp(0.02, 0.062, smooth(y_low, 0.93, y))
-            notch = 0.022 * bell(y, 0, 0.955, 0, 0.012, 1)
-            return s * (opening(y) + width - notch)
 
-        left, right = (outer, inner) if side < 0 else (inner, outer)
-        front_patch(body, table, y_low, 1.0, left, right, 0.007, tint, rows=12, cols=2)
+def rib_cuff(body, side, tint=WHITE):
+    """Puño elastizado de buzo o campera, apenas más oscuro."""
+    path = arm_path(side)
+    start, end = path[-2], path[-1]
+    along = lambda t: tuple(lerp(start[k], end[k], t) for k in range(3))
+    body.sweep([along(-0.9), along(0.55)], [0.041, 0.039], scale(tint, 0.82), segments=16, smooth_steps=1)
+
+
+def crew_neck(body, height=0.022, tint=WHITE):
+    """Cuello redondo tejido de remera o buzo."""
+    body.sweep([(0, 0.985, -0.017), (0, 0.985 + height, -0.016)], [0.073, 0.067], scale(tint, 0.84), segments=18, smooth_steps=1)
 
 
 def build_body():
@@ -1734,118 +1776,134 @@ def build_body():
     # Piernas sentadas: casi no se ven, pero evitan que parezca un busto flotando.
     for side in (-1, 1):
         body.use(Figure.FIXED, 0)
-        body.sweep([(side * 0.09, 0.5, -0.02), (side * 0.1, 0.5, 0.36), (side * 0.1, 0.08, 0.36)], [0.078, 0.064, 0.046], PANTS, segments=8, smooth_steps=2)
-        body.ellipsoid((side * 0.1, 0.045, 0.41), (0.05, 0.04, 0.105), SHOE, segments=8, rings=5)
+        body.sweep([(side * 0.09, 0.5, -0.02), (side * 0.1, 0.5, 0.36), (side * 0.1, 0.08, 0.36)], [0.078, 0.064, 0.046], srgb(0x2c3442), segments=8, smooth_steps=2)
+        body.ellipsoid((side * 0.1, 0.045, 0.41), (0.05, 0.04, 0.105), srgb(0x2a2420), segments=8, rings=5)
         hand(body, side)
 
-    def shirt_base(variant):
-        # Debajo siempre está la camisa: la ropa de encima se recorta con bordes limpios.
-        body.use(Figure.FIXED, variant)
-        torso(body, MAN, lambda p: tuple(a * b for a, b in zip(torso_shade(p), SHIRT)))
-
-    def shirt_sleeves():
-        body.use(Figure.FIXED)
-        for side in (-1, 1):
-            arm(body, side, SHIRT)
-            cuff(body, side, scale(SHIRT, 1.02))
-
-    def coat_sleeves():
-        for side in (-1, 1):
-            body.use(Figure.CLOTH)
-            arm(body, side, shrink=1.04)
-            cuff(body, side)
-
     vee = lambda low, width: (lambda y: lerp(0.0, width, smooth(low, 1.0, y)))
-    armhole = lambda y: lerp(math.pi / 2, 0.82, smooth(0.8, 0.965, y))
 
-    # 1. Chaleco abotonado, camisa y corbata.
-    shirt_base(1)
-    body.use(Figure.CLOTH)
-    garment(body, MAN, 0.44, 0.985, vee(0.83, 0.085), armhole)
-    necktie(body, MAN, 0.82)
-    shirt_collar(body, MAN)
+    def bare_arms():
+        for side in (-1, 1):
+            body.use(Figure.SKIN)
+            arm(body, side)
+
+    # 1. Remera lisa con cuello redondo.
+    body.use(Figure.CLOTH, 1)
+    torso(body, MAN, torso_shade)
+    crew_neck(body)
     neck(body, 0.056)
-    buttons(body, MAN, (0.815, 0.775))
-    shirt_sleeves()
-
-    # 2 y 3. Saco con solapas; el 3 lleva lengue blanco en vez de corbata.
-    for variant in (2, 3):
-        shirt_base(variant)
-        body.use(Figure.CLOTH)
-        opening = vee(0.8, 0.072)
-        garment(body, MAN, 0.44, 1.02, opening)
-        lapels(body, MAN, 0.8, opening, scale(WHITE, 0.74))
-        if variant == 2:
-            necktie(body, MAN, 0.79, INK)
-            shirt_collar(body, MAN)
-            # Pañuelo en el bolsillo.
-            body.use(Figure.FIXED)
-            front_patch(body, MAN, 0.872, 0.902, lambda y: 0.118, lambda y: 0.16 - 0.5 * (y - 0.872), 0.008, SHIRT, rows=3, cols=3)
-        else:
-            silk = srgb(0xf1ece0)
-            body.use(Figure.FIXED)
-            body.sweep([(0, 1.0, -0.016), (0, 1.03, -0.016)], [0.08, 0.074], silk, segments=14, smooth_steps=2)
-            # Dos paños cruzados que cierran el escote, con el de arriba apenas más claro.
-            drape = lambda y: smooth(0.8, 1.0, y)
-            front_patch(body, MAN, 0.81, 1.0, lambda y: -0.07 * drape(y) - 0.002, lambda y: 0.01 + 0.012 * drape(y), 0.006, scale(silk, 0.86), rows=8, cols=3)
-            front_patch(body, MAN, 0.82, 1.0, lambda y: -0.012 - 0.008 * drape(y), lambda y: 0.066 * drape(y) + 0.004, 0.009, silk, rows=8, cols=3)
-        neck(body, 0.056)
-        buttons(body, MAN, (0.775,), 0.012)
-        coat_sleeves()
-
-    # 4. Pulóver en V con la camisa asomando.
-    shirt_base(4)
-    v_open = vee(0.885, 0.062)
-    body.use(Figure.CLOTH)
-    garment(body, MAN, 0.44, 1.01, v_open)
-    necktie(body, MAN, 0.88, srgb(0x3b2f24))
-    shirt_collar(body, MAN)
+    bare_arms()
     body.use(Figure.CLOTH)
     for side in (-1, 1):
-        inner = lambda y, s=side: s * v_open(y)
-        outer = lambda y, s=side: s * (v_open(y) + 0.003 + 0.015 * smooth(0.885, 0.92, y))
-        left, right = (outer, inner) if side < 0 else (inner, outer)
-        front_patch(body, MAN, 0.885, 1.0, left, right, 0.007, scale(WHITE, 0.76), rows=6, cols=1)
-    neck(body, 0.057)
-    coat_sleeves()
+        sleeve(body, side, 1.7, hem=0.012)
 
-    # 5. Vestido con escote en V, collar de perlas y brazos descubiertos.
+    # 2. Buzo con capucha, bolsillo canguro y cordones.
+    body.use(Figure.CLOTH, 2)
+    torso(body, MAN, lambda p: scale(torso_shade(p), 1.0))
+    crew_neck(body, 0.018)
+    # Capucha caída detrás del cuello.
+    body.sweep([(-0.085, 0.99, 0.02), (-0.105, 1.02, -0.05), (-0.06, 1.05, -0.11), (0.0, 1.06, -0.125), (0.06, 1.05, -0.11), (0.105, 1.02, -0.05), (0.085, 0.99, 0.02)],
+               [0.03, 0.036, 0.04, 0.042, 0.04, 0.036, 0.03], scale(WHITE, 0.9), segments=14, smooth_steps=3)
+    front_patch(body, MAN, 0.5, 0.66, lambda y: -0.115 + 0.03 * smooth(0.5, 0.66, y), lambda y: 0.115 - 0.03 * smooth(0.5, 0.66, y), 0.006, scale(WHITE, 0.9), rows=4, cols=6)
+    neck(body, 0.056)
+    body.use(Figure.FIXED)
+    for side in (-1, 1):
+        top = front(MAN, side * 0.03, 0.975, 0.008)
+        low = front(MAN, side * 0.034, 0.85, 0.01)
+        body.sweep([top, low], [0.003, 0.003], srgb(0xe8e4dc), segments=6, smooth_steps=1)
+        body.ellipsoid(low, (0.0045, 0.008, 0.0045), srgb(0xd0ccc4), segments=6, rings=4)
+    for side in (-1, 1):
+        body.use(Figure.CLOTH)
+        arm(body, side, shrink=1.05)
+        rib_cuff(body, side)
+
+    # 3. Camisa abierta sobre una remera, con las mangas arremangadas.
+    tee = srgb(0xbdbcb6)
+    body.use(Figure.FIXED, 3)
+    torso(body, MAN, lambda p: tuple(a * b for a, b in zip(torso_shade(p), tee)))
+    crew_neck(body, 0.016, tee)
+    body.use(Figure.CLOTH)
+    garment(body, MAN, 0.44, 1.0, lambda y: lerp(0.05, 0.085, smooth(0.6, 1.0, y)))
+    # Cuello de camisa abierta: la banda rodea la nuca y baja por los bordes del frente.
+    body.sweep([(-0.07, 0.975, 0.03), (-0.08, 1.03, -0.03), (0.0, 1.05, -0.09), (0.08, 1.03, -0.03), (0.07, 0.975, 0.03)],
+               [0.012, 0.016, 0.017, 0.016, 0.012], scale(WHITE, 0.9), segments=10, smooth_steps=3)
+    for side in (-1, 1):
+        edge = lambda y, s=side: s * lerp(0.05, 0.085, smooth(0.6, 1.0, y))
+        left, right = (lambda y, e=edge: e(y) - 0.022, edge) if side < 0 else (edge, lambda y, e=edge: e(y) + 0.022)
+        front_patch(body, MAN, 0.86, 0.985, left, right, 0.008, scale(WHITE, 0.93), rows=6, cols=2)
+    neck(body, 0.056)
+    bare_arms()
+    body.use(Figure.CLOTH)
+    for side in (-1, 1):
+        sleeve(body, side, 3.6, hem=0.03)
+
+    # 4. Campera con cierre, cuello alto y puños elastizados.
+    body.use(Figure.CLOTH, 4)
+    torso(body, MAN, torso_shade)
+    body.sweep([(0, 0.98, -0.017), (0, 1.035, -0.016)], [0.08, 0.073], scale(WHITE, 0.88), segments=18, smooth_steps=1)
+    body.sweep([(0, 0.44, -0.03), (0, 0.48, -0.03)], [0.17, 0.168], scale(WHITE, 0.84), segments=24, smooth_steps=1)
+    body.use(Figure.FIXED)
+    front_patch(body, MAN, 0.45, 1.03, lambda y: -0.0035, lambda y: 0.0035, 0.006, srgb(0x9a9a96), rows=10, cols=1)
+    body.ellipsoid(front(MAN, 0.0, 0.93, 0.01), (0.006, 0.011, 0.004), srgb(0xb8b8b2), segments=6, rings=4)
+    neck(body, 0.056)
+    for side in (-1, 1):
+        body.use(Figure.CLOTH)
+        arm(body, side, shrink=1.06)
+        rib_cuff(body, side)
+
+    # 5. Sweater con escote en V y un collar fino.
     body.use(Figure.SKIN, 5)
     torso(body, WOMAN, torso_shade)
     body.use(Figure.CLOTH)
-    garment(body, WOMAN, 0.44, 1.0, vee(0.9, 0.074))
-    body.use(Figure.ACCENT)
-    front_patch(body, WOMAN, 0.752, 0.776, lambda y: -0.135, lambda y: 0.135, 0.007, rows=2, cols=10)
+    garment(body, WOMAN, 0.44, 1.0, vee(0.86, 0.06))
     neck(body, 0.047)
     body.use(Figure.FIXED)
-    for step in range(13):
-        t = step / 12 * 2 - 1
-        y = 1.012 - 0.052 * (1 - t * t)
-        p = front(WOMAN, t * 0.066, y, 0.008)
-        body.ellipsoid(p, (0.0072,) * 3, PEARL, segments=7, rings=5)
+    for step in range(17):
+        t = step / 16 * 2 - 1
+        p = front(WOMAN, t * 0.05, 1.0 - 0.05 * (1 - t * t), 0.006)
+        body.ellipsoid(p, (0.0022,) * 3, srgb(0xc9a557), segments=5, rings=3)
+    body.ellipsoid(front(WOMAN, 0, 0.945, 0.008), (0.006, 0.008, 0.003), srgb(0xc9a557), segments=8, rings=4)
     for side in (-1, 1):
         body.use(Figure.SKIN)
         arm(body, side, table_scale=0.84, shrink=0.86)
-        path = arm_path(side, 0.84)
         body.use(Figure.CLOTH)
-        root = (path[0][0] - side * 0.05, path[0][1] + 0.022, path[0][2])
-        body.sweep([root, *path[:2]], [0.046, 0.056, 0.052], segments=16, smooth_steps=3)
+        sleeve(body, side, 4.4, shrink=1.0, table_scale=0.84, hem=0.02)
 
-    # 6. Mozo: chaleco, moño y ligas en las mangas.
-    shirt_base(6)
-    body.use(Figure.CLOTH)
-    garment(body, MAN, 0.44, 0.985, vee(0.83, 0.1), armhole)
-    bow_tie(body, MAN)
-    shirt_collar(body, MAN)
-    neck(body, 0.057)
-    buttons(body, MAN, (0.815, 0.775), 0.0, srgb(0xc9a557))
-    shirt_sleeves()
-    body.use(Figure.ACCENT)
+    # 7. Remera de mujer con mangas cortas.
+    body.use(Figure.CLOTH, 7)
+    torso(body, WOMAN, torso_shade)
+    body.sweep([(0, 0.99, -0.017), (0, 1.008, -0.016)], [0.062, 0.057], scale(WHITE, 0.84), segments=18, smooth_steps=1)
+    neck(body, 0.047)
     for side in (-1, 1):
-        path = arm_path(side)
-        a, b = path[1], path[2]
-        ring = [tuple(lerp(a[k], b[k], t) for k in range(3)) for t in (0.25, 0.45)]
-        body.sweep(ring, [0.0545, 0.0535], segments=12, smooth_steps=1)
+        body.use(Figure.SKIN)
+        arm(body, side, table_scale=0.84, shrink=0.86)
+        body.use(Figure.CLOTH)
+        sleeve(body, side, 1.6, shrink=0.94, table_scale=0.84, hem=0.012)
+
+    # 8. Camisa de mujer, abotonada y arremangada.
+    body.use(Figure.CLOTH, 8)
+    torso(body, WOMAN, torso_shade)
+    shirt_collar(body, WOMAN, scale(WHITE, 0.95), kind=Figure.CLOTH)
+    front_patch(body, WOMAN, 0.45, 0.99, lambda y: -0.012, lambda y: 0.012, 0.005, scale(WHITE, 0.93), rows=8, cols=2)
+    buttons(body, WOMAN, (0.92, 0.84, 0.76, 0.68), 0.0, srgb(0xe8e4dc))
+    neck(body, 0.047)
+    for side in (-1, 1):
+        body.use(Figure.SKIN)
+        arm(body, side, table_scale=0.84, shrink=0.86)
+        body.use(Figure.CLOTH)
+        sleeve(body, side, 3.6, shrink=0.96, table_scale=0.84, hem=0.03)
+
+    # 6. Chomba con cuello y dos botones.
+    body.use(Figure.CLOTH, 6)
+    torso(body, MAN, torso_shade)
+    shirt_collar(body, MAN, scale(WHITE, 0.96), kind=Figure.CLOTH)
+    front_patch(body, MAN, 0.9, 0.99, lambda y: -0.016, lambda y: 0.016, 0.005, scale(WHITE, 0.92), rows=3, cols=2)
+    buttons(body, MAN, (0.965, 0.925), 0.0, srgb(0xe8e4dc))
+    neck(body, 0.057)
+    bare_arms()
+    body.use(Figure.CLOTH)
+    for side in (-1, 1):
+        sleeve(body, side, 1.8, hem=0.014)
     return body
 
 
@@ -2167,38 +2225,39 @@ def bake_light(room_obj, glow_obj, table_obj, props_objs):
     return light
 
 
-for item in list(bpy.data.objects):
-    bpy.data.objects.remove(item)
+if __name__ == "__main__":
+    for item in list(bpy.data.objects):
+        bpy.data.objects.remove(item)
 
-room_part = build_room()
-glow_part = room_part.glow_target
-room_obj = room_part.finish()
-glow_obj = glow_part.finish()
-table_obj = build_table().finish()
-build_chair().finish()
-build_body().finish()
-build_head().finish()
-build_face().finish()
-props_obj = place_props(PROPS, "utileria")
-catalog = build_bottle_catalog()
-bpy.context.view_layer.update()
-light = bake_light(room_obj, glow_obj, table_obj, (props_obj,))
-bake_props(props_obj, PROPS_SIZE, PROPS_FILE)
-bake_bottle_catalog(catalog)
-write_bottles(room_obj, light, catalog)
-for obj in bpy.data.objects:
-    if obj.type == "MESH" and obj.data.color_attributes.get("Albedo"):
-        obj.data.color_attributes.remove(obj.data.color_attributes["Albedo"])
-for obj in [o for o in bpy.data.objects if o.type == "LIGHT"]:
-    bpy.data.objects.remove(obj)
+    room_part = build_room()
+    glow_part = room_part.glow_target
+    room_obj = room_part.finish()
+    glow_obj = glow_part.finish()
+    table_obj = build_table().finish()
+    build_chair().finish()
+    build_body().finish()
+    build_head().finish()
+    build_face().finish()
+    props_obj = place_props(PROPS, "utileria")
+    catalog = build_bottle_catalog()
+    bpy.context.view_layer.update()
+    light = bake_light(room_obj, glow_obj, table_obj, (props_obj,))
+    bake_props(props_obj, PROPS_SIZE, PROPS_FILE)
+    bake_bottle_catalog(catalog)
+    write_bottles(room_obj, light, catalog)
+    for obj in bpy.data.objects:
+        if obj.type == "MESH" and obj.data.color_attributes.get("Albedo"):
+            obj.data.color_attributes.remove(obj.data.color_attributes["Albedo"])
+    for obj in [o for o in bpy.data.objects if o.type == "LIGHT"]:
+        bpy.data.objects.remove(obj)
 
-OUT.parent.mkdir(parents=True, exist_ok=True)
-bpy.ops.export_scene.gltf(
-    filepath=str(OUT),
-    export_format="GLB",
-    export_materials="NONE",
-    export_normals=False,
-    export_vertex_color="ACTIVE",
-    export_texcoords=True,
-    export_apply=True,
-)
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    bpy.ops.export_scene.gltf(
+        filepath=str(OUT),
+        export_format="GLB",
+        export_materials="NONE",
+        export_normals=False,
+        export_vertex_color="ACTIVE",
+        export_texcoords=True,
+        export_apply=True,
+    )
