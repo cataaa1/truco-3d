@@ -337,6 +337,10 @@ export function mountGame(
   function setPause(open: boolean): void {
     if (open && view?.phase === 'gameOver') return;
     pauseOpen = open;
+    if (open && isLocked()) {
+      releasingCursor = true;
+      document.exitPointerLock();
+    }
     senasOpen = false;
     phrasesOpen = false;
     guideOpen = false;
@@ -443,6 +447,8 @@ export function mountGame(
   }
 
   function onMouseDown(event: MouseEvent): void {
+    // En la pausa el cursor queda libre: no se vuelve a capturar ni se juega desde la mesa.
+    if (pauseOpen) return;
     if (event.button === 2) {
       // El clic derecho devuelve el cursor sin abrir la pausa.
       event.preventDefault();
