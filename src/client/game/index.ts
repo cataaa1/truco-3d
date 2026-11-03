@@ -1,6 +1,6 @@
 import { cardName } from '../../engine/cards';
 import { teamOf, type Action, type GameEvent, type PlayerView } from '../../engine/game';
-import { PHRASES, SENA_MS, SENAS, type RoomInfo, type ServerMessage } from '../../shared/protocol';
+import { PHRASES, SENAS, type RoomInfo, type ServerMessage } from '../../shared/protocol';
 import type { Connection } from '../net';
 import { faceSlot, faceThumbnail } from './atlas';
 import { TableScene } from './scene';
@@ -18,15 +18,20 @@ const STYLE = `
   .hud { position: absolute; pointer-events: none; }
   .hud button, .hud .panel { pointer-events: auto; }
   #overlay { inset: 0; }
-  .score { top: 12px; left: 12px; background: rgba(20,16,12,.92); border: 2px solid var(--gold); outline: 2px solid var(--sky); outline-offset: 2px; border-radius: 4px; padding: 8px 12px; min-width: 130px; }
+  .corner { top: 12px; left: 12px; display: flex; align-items: flex-start; gap: 10px; }
+  .score { background: rgba(20,16,12,.92); border: 2px solid var(--gold); outline: 2px solid var(--sky); outline-offset: 2px; border-radius: 4px; padding: 8px 12px; min-width: 130px; }
   .tally-head { display: flex; justify-content: space-between; gap: 14px; font-size: 13px; font-weight: 700; }
   .tally-board { display: flex; justify-content: space-around; margin-top: 4px; }
   .tally { display: block; }
   .score .us { color: var(--us); } .score .them { color: var(--them); }
   .status { top: 12px; left: 50%; transform: translateX(-50%); background: rgba(20,16,12,.92); border: 2px solid var(--gold); border-radius: 4px; padding: 8px 18px; text-align: center; min-width: 260px; max-width: 46vw; font-family: var(--lettering); color: var(--cream); text-shadow: 1px 1px 0 #000; }
   .timer { height: 4px; background: var(--gold); margin-top: 6px; border-radius: 2px; transform-origin: left; }
-  .toasts { top: 112px; left: 50%; transform: translateX(-50%); text-align: center; width: min(560px, 90vw); }
-  .toast { background: var(--cream); color: var(--red); font: 400 19px/1.25 var(--lettering); border: 3px solid var(--red); outline: 2px solid var(--gold); border-radius: 4px; padding: 6px 16px; margin-bottom: 8px; display: inline-block; box-shadow: 0 4px 14px rgba(0,0,0,.5); }
+  .cantos { background: rgba(20,16,12,.92); border: 2px solid var(--gold); outline: 2px solid var(--sky); outline-offset: 2px; border-radius: 4px; padding: 6px 10px; width: 190px; font-size: 13px; line-height: 1.3; color: var(--cream); }
+  .cantos:empty { display: none; }
+  .cantos div { padding: 1px 0; }
+  .cantos div:not(:last-child) { opacity: .6; }
+  .cantos .result { color: var(--gold); font-weight: 700; }
+  .cantos .us { color: var(--us); } .cantos .them { color: var(--them); }
   .actions { bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; width: min(760px, 96vw); }
   .actions button { background: rgba(20,16,12,.95); font-family: var(--lettering); color: var(--cream); }
   .actions button:hover:not(:disabled) { background: #33261a; }
@@ -118,9 +123,11 @@ export function mountGame(
     <div id="game">
       <canvas class="view" aria-label="Mesa de truco"></canvas>
       <div class="hud crosshair" id="crosshair" hidden></div>
-      <div class="hud score" id="score"></div>
+      <div class="hud corner">
+        <div class="score" id="score"></div>
+        <div class="cantos" id="cantos" aria-live="polite"></div>
+      </div>
       <div class="hud status"><div id="status"></div><div class="timer" id="timer"></div></div>
-      <div class="hud toasts" id="toasts" aria-live="polite"></div>
       <div class="hud tools">
         <button id="guide-btn">Guía <kbd>G</kbd></button>
         <button id="mute-btn">Sonido: sí</button>
@@ -148,16 +155,17 @@ export function mountGame(
   const nameOf = (seat: number) => (seat === me ? 'Vos' : room.seats[seat]?.name ?? `Jugador ${seat + 1}`);
   const names = () => room.seats.map((seat, i) => seat?.name ?? `Jugador ${i + 1}`);
 
-  function toast(text: string, ms = 2600): void {
-    const box = document.createElement('div');
-    box.className = 'toast';
-    box.textContent = text;
-    const wrap = document.createElement('div');
-    wrap.append(box);
-    $('toasts').append(wrap);
-    while ($('toasts').childElementCount > 4) $('toasts').firstElementChild!.remove();
-    setTimeout(() => wrap.remove(), ms);
+  /** Registro chico de cantos, respuestas y resultados al lado de los palitos. */
+  function note(text: string, result = false): void {
+    const line = document.createElement('div');
+    if (result) line.className = 'result';
+    line.textContent = text;
+    $('cantos').append(line);
+    while ($('cantos').childElementCount > 5) $('cantos').firstElementChild!.remove();
   }
+
+  /** Si en la mano se cantó truco, al terminar se anota quién lo ganó. */
+  let trucoSung = false;
 
   /** El truco a veces se canta con verso. La elección es igual en todas las pantallas. */
   function trucoClip(seat: number): string {
@@ -183,60 +191,50 @@ export function mountGame(
 
   function describe(event: GameEvent): void {
     switch (event.e) {
+      case 'deal':
+        trucoSung = false;
+        $('cantos').innerHTML = '';
+        break;
       case 'canto': {
         const text = CANTO_TEXT[event.canto] ?? event.canto;
-        toast(`${nameOf(event.seat)}: ${text}`);
+        if (event.canto === 'truco') trucoSung = true;
+        note(`${nameOf(event.seat)}: ${text}`);
         voices.play(event.seat, cantoClip(event.seat, event.canto), text);
         break;
       }
       case 'answer': {
         const what = event.what === 'truco' ? 'el truco' : event.what === 'envido' ? 'el envido' : 'la flor';
-        const text = event.quiero ? `¡Quiero ${what}!` : `No quiero ${what}`;
-        toast(`${nameOf(event.seat)}: ${text}`);
+        note(`${nameOf(event.seat)}: ${event.quiero ? 'Quiero' : 'No quiero'} ${what}`);
         const clip = event.quiero ? 'quiero' : event.what === 'flor' && voices.has(event.seat, 'achico') ? 'achico' : 'noquiero';
         voices.play(event.seat, clip, event.quiero ? '¡Quiero!' : 'No quiero');
         break;
       }
       case 'mazo':
-        toast(`${nameOf(event.seat)} se fue al mazo`);
         voices.play(event.seat, 'mazo');
         break;
       case 'envido':
         if (event.tantos >= 0) {
-          toast(event.seat === me ? `Ganaste el envido con ${event.tantos}. Al final tenés que mostrar.` : `${nameOf(event.seat)} gana el envido con ${event.tantos}. Al final tiene que mostrar.`, 3600);
+          note(`Envido: ${nameOf(event.seat)} con ${event.tantos} (+${event.points} ${teamLabel(event.team)})`, true);
           voices.play(event.seat, String(event.tantos));
           const rival = (event.seat + 1) % room.players;
           setTimeout(() => voices.play(rival, 'son_buenas'), 800);
-        } else toast(`Envido rechazado: ${event.points} para ${teamLabel(event.team)}`);
-        break;
-      case 'mustShow':
-        toast(event.seat === me ? 'Ganaste el envido: mostrá tus cartas o los puntos son de ellos' : `${nameOf(event.seat)} tiene que mostrar sus cartas`, 3600);
+        } else note(`Envido: +${event.points} ${teamLabel(event.team)}`, true);
         break;
       case 'show':
-        toast(
-          event.shown
-            ? `${event.seat === me ? 'Mostraste' : `${nameOf(event.seat)} mostró`} ${event.cards.map(cardName).join(' y ')}: ${event.points} para ${teamLabel(event.team)}`
-            : `${event.seat === me ? 'No mostraste' : `${nameOf(event.seat)} no mostró`}: ${event.points} para ${teamLabel(event.team)}`,
-          4200,
-        );
+        if (!event.shown) note(`No mostró: envido +${event.points} ${teamLabel(event.team)}`, true);
         break;
       case 'flor':
-        toast(`Flor: ${event.points} para ${teamLabel(event.team)}`);
-        break;
-      case 'round':
-        if (event.winner === null) toast('Parda');
+        note(`Flor: +${event.points} ${teamLabel(event.team)}`, true);
         break;
       case 'hand':
-        toast(`${handReason(event.reason)}${event.points} ${event.points === 1 ? 'punto' : 'puntos'} para ${teamLabel(event.team)}`, 3200);
+        if (trucoSung) note(`Truco: +${event.points} ${teamLabel(event.team)}`, true);
+        trucoSung = false;
         maybeBanter(event.team, event.points);
         break;
       default:
         break;
     }
   }
-
-  const handReason = (reason: string) =>
-    reason === 'mazo' ? 'Se fueron al mazo. ' : '';
 
   const teamLabel = (team: number) => (team === teamOf(me) ? 'nosotros' : 'ellos');
 
@@ -313,7 +311,6 @@ export function mountGame(
     const sena = SENAS[index];
     if (!sena || !teamGame) return;
     conn.send({ t: 'sena', id: sena.id });
-    toast(`Hiciste: ${sena.gesture.toLowerCase()}`, SENA_MS + 500);
   }
 
   function onKeyDown(event: KeyboardEvent): void {
@@ -539,10 +536,6 @@ export function mountGame(
     handle(message) {
       switch (message.t) {
         case 'room':
-          message.room.seats.forEach((seat, i) => {
-            const before = room.seats[i];
-            if (i !== me && seat?.bot && before && !before.bot) toast(`${before.name} se fue. Sigue un bot en su lugar.`, 3600);
-          });
           room = message.room;
           scene.setTags(names(), lastTurn);
           break;
@@ -550,10 +543,6 @@ export function mountGame(
           previousPending = view?.pendingLabel ?? null;
           view = message.view;
           for (const event of message.events) describe(event);
-          // El envido se resuelve primero, pero el truco cantado antes sigue esperando respuesta.
-          if (message.events.some((event) => event.e === 'envido') && view.pendingLabel && view.responding !== null) {
-            toast(`Sigue pendiente: ${CANTO_TEXT[view.pendingLabel] ?? view.pendingLabel}`, 3600);
-          }
           scene.setView(view);
           if (view.turn !== lastTurn) {
             lastTurn = view.turn;
@@ -573,11 +562,9 @@ export function mountGame(
           scene.showFace(message.s, faceSlot(message.id), message.ms);
           break;
         case 'phrase':
-          toast(`${nameOf(message.s)}: ${PHRASES[message.i] ?? ''}`);
           voices.play(message.s, `frase${message.i + 1}`);
           break;
         case 'err':
-          toast(message.msg);
           break;
       }
     },
