@@ -19,6 +19,7 @@ ATLAS_FILE = Path(args[1])
 LIGHT_FILE = Path(args[2]).resolve()
 PROPS_FILE = Path(args[3]).resolve()
 PROPS_SIZE = int(os.environ.get("PROPS_SIZE", 2048))
+BOTTLES_FILE = Path(args[4]).resolve()
 sys.path.append(str(Path(__file__).resolve().parent))
 import utileria  # noqa: E402
 
@@ -41,9 +42,17 @@ TABLE_Y = 0.74
 # Objetos de utileria.py colgados en el salón: (objeto, posición del punto de apoyo en el juego, giro).
 # El giro dice hacia dónde mira el frente: -90° hacia -x (pared derecha), 180° hacia -z (pared de atrás).
 PROPS = [
-    ("cuadro_camiseta", (X_MAX, 1.5, 0.45), -90),
-    ("cuadro_camiseta", (-0.72, 2.32, Z_MAX), 180),
+    ("cuadro_camiseta", (X_MAX, 1.5, 0.45), -90, {}),
+    ("cuadro_camiseta", (-0.72, 2.32, Z_MAX), 180, {}),
 ]
+# Las botellas las van sumando los estantes, la barra y las mesas mientras se arma el salón.
+BOTTLES = []
+SHELF_WINES = ["botella_vino", "botella_vino", "botella_borgona", "botella_vermu", "botella_whisky", "botella_gin"]
+BOTTLE_GAP = {"botella_vino": 0.092, "botella_borgona": 0.096, "botella_vermu": 0.1, "botella_whisky": 0.094, "botella_gin": 0.088, "botella_fernet": 0.098, "botella_licor": 0.074}
+
+
+def put_bottle(name, x, y, z, light=False, turn=0.0):
+    BOTTLES.append((name, (x, y, z), turn, {"light": light}))
 
 # (posición, color lineal, potencia en vatios de Blender, radio)
 LAMPS = [
@@ -481,17 +490,13 @@ def argentine_flag(part, x0, x1, y0, y1, z):
 def fill_row(part, x0, x1, y, z, kind):
     x = x0 + 0.05
     while x < x1 - 0.04:
-        if kind == "fernet":
-            fernet(part, x, y, z)
-            x += 0.098
-        elif kind == "wine":
-            bottle(part, x, y, z, random.uniform(0.3, 0.38))
-            x += random.uniform(0.098, 0.125)
-        elif kind == "turquoise":
-            r = 0.04
-            h = random.uniform(0.3, 0.34)
-            part.lathe((x, y, z), [(r, 0), (r, h * 0.66), (r * 0.42, h * 0.84), (r * 0.36, h), (0, h)], segments=6, tint=TURQUOISE)
-            x += 0.1
+        if kind in ("fernet", "wine", "turquoise"):
+            name = {"fernet": "botella_fernet", "turquoise": "botella_licor"}.get(kind) or random.choice(SHELF_WINES)
+            gap = BOTTLE_GAP[name]
+            if x + gap / 2 > x1 - 0.02:
+                break
+            put_bottle(name, x + gap / 2 - 0.04, y, z, light=True, turn=random.uniform(-12, 12))
+            x += gap
         elif kind == "glasses":
             glass(part, x, y, z, tall=True)
             x += 0.09
@@ -707,7 +712,7 @@ def cafe_table(part, x, z, chairs, goods=0):
     ashtray(part, x - 0.12, top, z + 0.08)
     if goods == 0:
         fernet_drink(part, x + 0.08, top, z + 0.14)
-        fernet(part, x + 0.2, top, z - 0.06)
+        put_bottle("botella_fernet", x + 0.2, top, z - 0.06, turn=20)
         siphon(part, x - 0.04, top, z - 0.16, TURQUOISE)
     elif goods == 1:
         part.lathe((x + 0.1, top, z), [(0.03, 0), (0.03, 0.2), (0.012, 0.28), (0, 0.28)], segments=6, tint=random.choice(GLASS_COLORS))
@@ -965,7 +970,7 @@ def build_room():
         glass(room, 0.55 + i * 0.09, 1.04, counter_z + 0.2, tall=i % 2 == 0)
     ashtray(room, -1.5, 1.04, counter_z + 0.22)
     # Sobre la barra: fernet con coca, mate y alfajores.
-    fernet(room, 0.36, 1.04, counter_z - 0.08)
+    put_bottle("botella_fernet", 0.36, 1.04, counter_z - 0.08, turn=-15)
     cola(room, 0.47, 1.04, counter_z - 0.08)
     fernet_drink(room, 0.42, 1.04, counter_z + 0.12)
     fernet_drink(room, 0.3, 1.04, counter_z + 0.16)
@@ -1875,14 +1880,14 @@ def use_gpu():
     return "CPU"
 
 
-def place_props():
+def place_props(items, mesh_name):
     """Arma cada objeto de la utilería en su lugar y los junta en una sola malla."""
     from mathutils import Matrix
 
     scene = bpy.context.scene
     placed = []
-    for name, (x, y, z), yaw in PROPS:
-        collection = utileria.build(name)
+    for name, (x, y, z), yaw, options in items:
+        collection = utileria.build(name, **options)
         transform = Matrix.Translation((x, -z, y)) @ Matrix.Rotation(math.radians(yaw), 4, "Z")
         for obj in list(collection.objects):
             obj.data.transform(transform)
@@ -1895,11 +1900,11 @@ def place_props():
     bpy.context.view_layer.objects.active = placed[0]
     bpy.ops.object.join()
     props = bpy.context.view_layer.objects.active
-    props.name = props.data.name = "utileria"
+    props.name = props.data.name = mesh_name
     return props
 
 
-def bake_props(props_obj):
+def bake_props(props_obj, size, out_file):
     """Hornea color y luz juntos en una textura propia: el juego la muestra tal cual."""
     scene = bpy.context.scene
     for obj in bpy.data.objects:
@@ -1924,7 +1929,7 @@ def bake_props(props_obj):
     bpy.ops.uv.pack_islands(margin=0.002, rotate=True, shape_method="CONCAVE")
     bpy.ops.object.mode_set(mode="OBJECT")
 
-    image = bpy.data.images.new("utileria", PROPS_SIZE, PROPS_SIZE, float_buffer=True)
+    image = bpy.data.images.new(props_obj.name, size, size, float_buffer=True)
     for slot in props_obj.material_slots:
         nodes = slot.material.node_tree.nodes
         target = nodes.new("ShaderNodeTexImage")
@@ -1936,19 +1941,19 @@ def bake_props(props_obj):
     scene.render.bake.margin = 4
     bpy.ops.object.bake(type="DIFFUSE")
 
-    pixels = np.zeros(PROPS_SIZE * PROPS_SIZE * 4, dtype=np.float32)
+    pixels = np.zeros(size * size * 4, dtype=np.float32)
     image.pixels.foreach_get(pixels)
     rgb = pixels.reshape(-1, 4)[:, :3]
     linear = np.clip(rgb, 0, 1)
     rgb[:] = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055)
     pixels.reshape(-1, 4)[:, 3] = 1.0
-    encoded = bpy.data.images.new("utileria8", PROPS_SIZE, PROPS_SIZE, float_buffer=False)
+    encoded = bpy.data.images.new(f"{props_obj.name}8", size, size, float_buffer=False)
     encoded.colorspace_settings.name = "Non-Color"
     encoded.pixels.foreach_set(pixels)
-    encoded.filepath_raw = str(PROPS_FILE)
+    encoded.filepath_raw = str(out_file)
     encoded.file_format = "PNG"
     encoded.save()
-    print(f"Horneado: utilería {PROPS_SIZE} px, {len(mesh.polygons)} caras")
+    print(f"Horneado: {props_obj.name} {size} px, {len(mesh.polygons)} caras")
 
     # Solo queda la UV del horneado, sin materiales.
     for layer in [layer for layer in mesh.uv_layers if layer.name != "Horneado"]:
@@ -1956,7 +1961,7 @@ def bake_props(props_obj):
     props_obj.data.materials.clear()
 
 
-def bake_light(room_obj, glow_obj, table_obj, props_obj):
+def bake_light(room_obj, glow_obj, table_obj, props_objs):
     """Calcula toda la luz del salón y la guarda en una imagen, con sombras y rebotes reales."""
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
@@ -2000,7 +2005,7 @@ def bake_light(room_obj, glow_obj, table_obj, props_obj):
     mesh.uv_layers.active = lightmap
     lightmap.active_render = True
     for other in bpy.data.objects:
-        if other.type == "MESH" and other not in (room_obj, glow_obj, table_obj, props_obj):
+        if other.type == "MESH" and other not in (room_obj, glow_obj, table_obj, *props_objs):
             other.hide_render = True
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
@@ -2062,10 +2067,13 @@ build_chair().finish()
 build_body().finish()
 build_head().finish()
 build_face().finish()
-props_obj = place_props()
+props_obj = place_props(PROPS, "utileria")
+bottles_obj = place_props(BOTTLES, "botellas")
 bpy.context.view_layer.update()
-bake_light(room_obj, glow_obj, table_obj, props_obj)
-bake_props(props_obj)
+bake_light(room_obj, glow_obj, table_obj, (props_obj, bottles_obj))
+bake_props(props_obj, PROPS_SIZE, PROPS_FILE)
+# Se ven de lejos: alcanza con menos resolución que el cuadro.
+bake_props(bottles_obj, 1024, BOTTLES_FILE)
 for obj in bpy.data.objects:
     if obj.type == "MESH" and obj.data.color_attributes.get("Albedo"):
         obj.data.color_attributes.remove(obj.data.color_attributes["Albedo"])

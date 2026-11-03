@@ -15,8 +15,9 @@ GOLD = (0.8, 0.52, 0.12)
 LOCAL = "local"
 
 
-def material(name, color, roughness=0.6, metallic=0.0, stripes=None, cloth=False):
-    """Material simple. stripes = (período, ancho, color): bandas verticales según x del objeto."""
+def material(name, color, roughness=0.6, metallic=0.0, stripes=None, cloth=False, bands=()):
+    """Material simple. stripes = (período, ancho, color): bandas verticales según x del objeto.
+    bands = [(altura, alto, color), ...]: franjas horizontales, como las de una etiqueta."""
     found = bpy.data.materials.get(name)
     if found:
         return found
@@ -53,6 +54,32 @@ def material(name, color, roughness=0.6, metallic=0.0, stripes=None, cloth=False
         mix.inputs[7].default_value = (*color, 1)
         links.new(band.outputs["Result"], mix.inputs["Factor"])
         links.new(mix.outputs[2], shader.inputs["Base Color"])
+    if bands:
+        split = nodes.new("ShaderNodeSeparateXYZ")
+        links.new(local.outputs["Vector"], split.inputs[0])
+        color_out = None
+        for center, height, band_color in bands:
+            distance = nodes.new("ShaderNodeMath")
+            distance.operation = "SUBTRACT"
+            distance.inputs[1].default_value = center
+            links.new(split.outputs["Z"], distance.inputs[0])
+            absolute = nodes.new("ShaderNodeMath")
+            absolute.operation = "ABSOLUTE"
+            links.new(distance.outputs[0], absolute.inputs[0])
+            edge = nodes.new("ShaderNodeMapRange")
+            edge.inputs["From Min"].default_value = height / 2 - 0.0006
+            edge.inputs["From Max"].default_value = height / 2 + 0.0006
+            links.new(absolute.outputs[0], edge.inputs["Value"])
+            mix = nodes.new("ShaderNodeMix")
+            mix.data_type = "RGBA"
+            mix.inputs[6].default_value = (*band_color, 1)
+            if color_out is None:
+                mix.inputs[7].default_value = (*color, 1)
+            else:
+                links.new(color_out, mix.inputs[7])
+            links.new(edge.outputs["Result"], mix.inputs["Factor"])
+            color_out = mix.outputs[2]
+        links.new(color_out, shader.inputs["Base Color"])
     if cloth:
         # Pliegues suaves y trama de tela: se notan al hornear la luz.
         folds = nodes.new("ShaderNodeTexNoise")
@@ -286,11 +313,238 @@ def cuadro_camiseta(collection_name="cuadro_camiseta"):
     return collection
 
 
-BUILDERS = {"cuadro_camiseta": cuadro_camiseta}
+# ---- Botellas ----
+# Perfiles reales, de la base al pico: (radio, altura) en metros. Se suavizan antes de girarlos.
+
+
+def smooth_profile(points, steps=4):
+    """Curva suave que pasa por todos los puntos (Catmull-Rom)."""
+    out = []
+    padded = [points[0], *points, points[-1]]
+    for i in range(1, len(padded) - 2):
+        p0, p1, p2, p3 = padded[i - 1], padded[i], padded[i + 1], padded[i + 2]
+        for step in range(steps):
+            t = step / steps
+            out.append(tuple(
+                0.5 * (2 * p1[k] + (p2[k] - p0[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t * t + (3 * p1[k] - p0[k] - 3 * p2[k] + p3[k]) * t ** 3)
+                for k in range(2)
+            ))
+    out.append(points[-1])
+    return out
+
+
+def radius_at(profile, z):
+    for (r0, z0), (r1, z1) in zip(profile, profile[1:]):
+        if z0 <= z <= z1 and z1 > z0:
+            return r0 + (r1 - r0) * (z - z0) / (z1 - z0)
+    return profile[-1][0]
+
+
+def section(angle, squareness):
+    """Corte de la botella: 1 es redondo; más alto, más cuadrado con las esquinas redondeadas."""
+    c, s = math.cos(angle), math.sin(angle)
+    e = 1 / squareness
+    return (math.copysign(abs(c) ** e, c), math.copysign(abs(s) ** e, s))
+
+
+def revolve(name, profile, mat, collection, segments=28, squareness=1.0, a0=0.0, a1=2 * math.pi, offset=0.0, round_from=None):
+    """Gira un perfil alrededor del eje vertical. Con a0 y a1 arma solo una parte, como una etiqueta.
+    round_from: altura desde la que una botella cuadrada se vuelve redonda (el hombro y el cuello)."""
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    full = abs(a1 - a0 - 2 * math.pi) < 1e-6
+    columns = segments if full else segments + 1
+    rings = []
+    for r, z in profile:
+        ring = []
+        shape = squareness
+        if round_from is not None:
+            t = min(1.0, max(0.0, (z - round_from + 0.012) / 0.03))
+            shape = squareness + (1.0 - squareness) * t * t * (3 - 2 * t)
+        for i in range(columns):
+            angle = a0 + (a1 - a0) * i / segments
+            sx, sy = section(angle, shape)
+            ring.append(bm.verts.new(((r + offset) * sx, (r + offset) * sy, z)))
+        rings.append(ring)
+    for lower, upper in zip(rings, rings[1:]):
+        for i in range(segments):
+            j = (i + 1) % columns
+            bm.faces.new((lower[i], lower[j], upper[j], upper[i]))
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh)
+    bm.free()
+    obj = link(bpy.data.objects.new(name, mesh), collection)
+    obj.data.materials.append(mat)
+    smooth(obj, angle=60)
+    return obj
+
+
+GLASS = {
+    "verde": (0.03, 0.12, 0.05),
+    "verde_claro": (0.12, 0.26, 0.12),
+    "ambar": (0.32, 0.12, 0.02),
+    "oscuro": (0.035, 0.018, 0.01),
+    "cristal": (0.55, 0.62, 0.6),
+    "turquesa": (0.025, 0.2, 0.23),
+}
+
+
+# Hacia dónde queda el salón visto desde los estantes: ahí se pinta el reflejo del vidrio.
+SHINE = (-0.35, -1.0, 0.3)
+
+
+def glass_material(kind):
+    """Vidrio de color con un reflejo pintado: en el juego la luz es mate y el brillo se perdería."""
+    name = f"vidrio_{kind}"
+    if bpy.data.materials.get(name):
+        return bpy.data.materials[name]
+    mat = material(name, GLASS[kind], roughness=0.12)
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    shader = nodes["Principled BSDF"]
+    geometry = nodes.new("ShaderNodeNewGeometry")
+    facing = nodes.new("ShaderNodeVectorMath")
+    facing.operation = "DOT_PRODUCT"
+    length = math.sqrt(sum(c * c for c in SHINE))
+    facing.inputs[1].default_value = tuple(c / length for c in SHINE)
+    links.new(geometry.outputs["Normal"], facing.inputs[0])
+    narrow = nodes.new("ShaderNodeMapRange")
+    narrow.inputs["From Min"].default_value = 0.95
+    narrow.inputs["From Max"].default_value = 0.995
+    links.new(facing.outputs["Value"], narrow.inputs["Value"])
+    strength = nodes.new("ShaderNodeMath")
+    strength.operation = "MULTIPLY"
+    strength.inputs[1].default_value = 0.4
+    links.new(narrow.outputs["Result"], strength.inputs[0])
+    mix = nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
+    mix.inputs[6].default_value = (*GLASS[kind], 1)
+    mix.inputs[7].default_value = (0.95, 0.93, 0.88, 1)
+    links.new(strength.outputs[0], mix.inputs["Factor"])
+    links.new(mix.outputs[2], shader.inputs["Base Color"])
+    return mat
+
+
+def bottle(name, profile, glass, label, capsule, collection, squareness=1.0, label_span=(0.08, 0.2), neck_label=None, cap_length=0.052, light=False):
+    """Botella completa: vidrio con fondo hundido, etiqueta apenas despegada y cápsula en el pico.
+    light: versión con menos lados para los estantes del fondo, que desde la mesa se ve igual."""
+    segments, label_segments = (10, 6) if light else (28, 16)
+    shape = smooth_profile(profile, steps=1 if light else 4)
+    widest = max(r for r, _ in profile)
+    shoulder = next(z for r, z in profile[3:] if r < widest * 0.95)
+    revolve(f"{name}_vidrio", shape, glass_material(glass), collection, segments=segments, squareness=squareness, round_from=shoulder)
+    top = max(profile[-2][1], profile[-1][1])
+    if capsule:
+        # Tapa cilíndrica, apenas más ancha que el pico, con el borde de arriba redondeado.
+        r = max(radius_at(shape, top - cap_length + cap_length * t / 8) for t in range(9)) + 0.0012
+        cap_shape = [(r - 0.0006, top - cap_length), (r, top - cap_length + 0.0015), (r, top - 0.002), (r - 0.0015, top + 0.0008), (0.0, top + 0.0012)]
+        # La tapa sigue el cuello, que siempre es redondo aunque la botella sea cuadrada.
+        revolve(f"{name}_capsula", cap_shape, material(f"capsula_{name}", capsule, roughness=0.35), collection, segments=segments)
+    if label:
+        z0, z1 = label_span
+        label_shape = [(radius_at(shape, z0 + (z1 - z0) * t / 6), z0 + (z1 - z0) * t / 6) for t in range(7)]
+        span = math.radians(150)
+        revolve(f"{name}_etiqueta", label_shape, label, collection, segments=label_segments, squareness=squareness, a0=-math.pi / 2 - span, a1=-math.pi / 2 + span, offset=0.0008)
+    if neck_label:
+        z0, z1, mat = neck_label
+        neck = [(radius_at(shape, z0 + (z1 - z0) * t / 3), z0 + (z1 - z0) * t / 3) for t in range(4)]
+        revolve(f"{name}_collarin", neck, mat, collection, segments=label_segments, offset=0.0006)
+
+
+def paper(name, base, bands):
+    return material(f"etiqueta_{name}", base, roughness=0.75, bands=bands)
+
+
+WINE_RED = (0.32, 0.03, 0.04)
+
+
+def botella_vino(collection_name="botella_vino", light=False):
+    """Bordelesa de 75 cl: hombros marcados y cuello largo."""
+    collection = bpy.data.collections.new(collection_name)
+    profile = [(0.0, 0.004), (0.02, 0.0), (0.0365, 0.001), (0.0375, 0.012), (0.0375, 0.2), (0.034, 0.215), (0.022, 0.228),
+               (0.0145, 0.24), (0.0135, 0.28), (0.0145, 0.292), (0.0155, 0.296), (0.0135, 0.3), (0.0, 0.3)]
+    label = paper("vino", (0.78, 0.7, 0.52), [(0.142, 0.012, WINE_RED), (0.09, 0.006, GOLD), (0.19, 0.004, GOLD)])
+    bottle("vino", profile, "verde", label, WINE_RED, collection, label_span=(0.07, 0.2), light=light)
+    return collection
+
+
+def botella_borgona(collection_name="botella_borgona", light=False):
+    """Borgoña: hombros caídos, para blancos y rosados."""
+    collection = bpy.data.collections.new(collection_name)
+    profile = [(0.0, 0.004), (0.02, 0.0), (0.0395, 0.002), (0.04, 0.014), (0.0395, 0.15), (0.034, 0.19), (0.022, 0.222),
+               (0.0145, 0.245), (0.0138, 0.282), (0.0152, 0.292), (0.0152, 0.297), (0.0132, 0.3), (0.0, 0.3)]
+    label = paper("borgona", (0.84, 0.8, 0.7), [(0.1, 0.03, (0.16, 0.3, 0.2)), (0.125, 0.004, GOLD)])
+    bottle("borgona", profile, "verde_claro", label, GOLD, collection, label_span=(0.06, 0.14), light=light)
+    return collection
+
+
+def botella_fernet(collection_name="botella_fernet", light=False):
+    """La de fernet: oscura, panzona abajo, etiqueta crema y cuello rojo."""
+    collection = bpy.data.collections.new(collection_name)
+    profile = [(0.0, 0.004), (0.025, 0.0), (0.04, 0.002), (0.041, 0.014), (0.04, 0.175), (0.035, 0.2), (0.023, 0.222),
+               (0.016, 0.24), (0.015, 0.28), (0.017, 0.287), (0.017, 0.292), (0.014, 0.295), (0.0, 0.295)]
+    label = paper("fernet", (0.86, 0.8, 0.64), [(0.125, 0.01, (0.05, 0.04, 0.03)), (0.08, 0.008, WINE_RED), (0.165, 0.008, WINE_RED)])
+    neck = material("collarin_fernet", WINE_RED, roughness=0.5)
+    bottle("fernet", profile, "oscuro", label, WINE_RED, collection, label_span=(0.065, 0.18), neck_label=(0.243, 0.262, neck), light=light)
+    return collection
+
+
+def botella_gin(collection_name="botella_gin", light=False):
+    """Gin: vidrio claro, cuadrada de cantos redondos, hombro corto."""
+    collection = bpy.data.collections.new(collection_name)
+    profile = [(0.0, 0.004), (0.02, 0.0), (0.034, 0.002), (0.035, 0.012), (0.035, 0.2), (0.031, 0.214), (0.018, 0.224),
+               (0.013, 0.232), (0.013, 0.258), (0.016, 0.262), (0.016, 0.27), (0.0, 0.272)]
+    blue = (0.1, 0.2, 0.4)
+    label = paper("gin", (0.9, 0.9, 0.86), [(0.12, 0.02, blue), (0.095, 0.003, blue), (0.145, 0.003, blue)])
+    bottle("gin", profile, "cristal", label, (0.6, 0.6, 0.62), collection, squareness=2.4, label_span=(0.07, 0.17), cap_length=0.022, light=light)
+    return collection
+
+
+def botella_vermu(collection_name="botella_vermu", light=False):
+    """Vermú: ámbar, redonda y ancha, etiqueta grande."""
+    collection = bpy.data.collections.new(collection_name)
+    profile = [(0.0, 0.004), (0.025, 0.0), (0.042, 0.002), (0.043, 0.014), (0.043, 0.18), (0.038, 0.2), (0.024, 0.218),
+               (0.016, 0.232), (0.0155, 0.27), (0.0175, 0.276), (0.0175, 0.282), (0.0, 0.284)]
+    label = paper("vermu", (0.9, 0.85, 0.72), [(0.115, 0.03, WINE_RED), (0.115, 0.012, GOLD), (0.078, 0.004, WINE_RED), (0.152, 0.004, WINE_RED)])
+    bottle("vermu", profile, "ambar", label, GOLD, collection, label_span=(0.06, 0.17), cap_length=0.035, light=light)
+    return collection
+
+
+def botella_whisky(collection_name="botella_whisky", light=False):
+    """Whisky: cuadrada, petisa y de hombro alto."""
+    collection = bpy.data.collections.new(collection_name)
+    profile = [(0.0, 0.004), (0.02, 0.0), (0.037, 0.002), (0.038, 0.012), (0.038, 0.17), (0.034, 0.182), (0.02, 0.19),
+               (0.015, 0.196), (0.015, 0.222), (0.018, 0.226), (0.018, 0.236), (0.0, 0.238)]
+    label = paper("whisky", (0.92, 0.88, 0.78), [(0.1, 0.014, (0.06, 0.06, 0.06)), (0.06, 0.006, GOLD), (0.14, 0.006, GOLD)])
+    bottle("whisky", profile, "ambar", label, (0.06, 0.06, 0.06), collection, squareness=3.2, label_span=(0.04, 0.16), cap_length=0.024, light=light)
+    return collection
+
+
+def botella_licor(collection_name="botella_licor", light=False):
+    """Licor de color, angosta y alta: la fila turquesa de la barra."""
+    collection = bpy.data.collections.new(collection_name)
+    profile = [(0.0, 0.004), (0.018, 0.0), (0.03, 0.002), (0.031, 0.012), (0.031, 0.21), (0.026, 0.228), (0.015, 0.25),
+               (0.0115, 0.27), (0.0115, 0.3), (0.0135, 0.305), (0.0135, 0.312), (0.0, 0.314)]
+    bottle("licor", profile, "turquesa", None, (0.75, 0.72, 0.65), collection, cap_length=0.03, light=light)
+    return collection
+
+
+BOTTLES = ["botella_vino", "botella_borgona", "botella_fernet", "botella_gin", "botella_vermu", "botella_whisky", "botella_licor"]
+
+BUILDERS = {
+    "cuadro_camiseta": cuadro_camiseta,
+    "botella_vino": botella_vino,
+    "botella_borgona": botella_borgona,
+    "botella_fernet": botella_fernet,
+    "botella_gin": botella_gin,
+    "botella_vermu": botella_vermu,
+    "botella_whisky": botella_whisky,
+    "botella_licor": botella_licor,
+}
 # Materiales con dibujo fino: reciben más resolución en la textura horneada.
 DETAILED = {"camiseta_bastones", "camiseta_manga", "camiseta_negro", "bordado_oro"}
 
 
-def build(name):
+def build(name, **options):
     """Arma un objeto y devuelve su colección, sin colgarla de ninguna escena."""
-    return BUILDERS[name]()
+    return BUILDERS[name](**options)
