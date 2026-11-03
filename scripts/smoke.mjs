@@ -86,8 +86,9 @@ b.send({ t: 'gaze', y: -Math.PI / 4, p: 0 }); // Beto, a la izquierda de Caro: m
 d.send({ t: 'gaze', y: -1.1, p: 0 }); // Dani mira a otro lado.
 await sleep(250);
 a.send({ t: 'sena', id: 'ancho_espada' });
-await sleep(300);
 const got = (p) => p.inbox.some((m) => m.t === 'sena' && m.id === 'ancho_espada');
+// Contra el sitio real la respuesta puede tardar: se espera a que lleguen, con un tope.
+await until(() => got(c) && got(b), 1500);
 check('la compañera que mira ve la seña', got(c));
 check('el rival que mira también la ve', got(b));
 check('el rival distraído no recibe nada', !got(d));
