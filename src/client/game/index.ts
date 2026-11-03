@@ -47,7 +47,6 @@ const STYLE = `
   .panel h2 { margin-bottom: 8px; }
   .sena-row { display: flex; align-items: center; gap: 10px; padding: 3px 4px; width: 100%; text-align: left; background: none; border: 0; border-radius: 4px; }
   .sena-row canvas { width: 40px; height: 40px; flex: none; }
-  .hint { top: 74px; left: 50%; transform: translateX(-50%); background: rgba(20,16,12,.85); border-radius: 4px; padding: 5px 12px; font-size: 14px; text-align: center; white-space: nowrap; max-width: 96vw; }
   .offline { top: 60px; right: 12px; background: var(--red); color: var(--cream); border-radius: 4px; padding: 6px 12px; }
 `;
 
@@ -134,7 +133,6 @@ export function mountGame(
         <button id="mute-btn">Sonido: sí</button>
         <button id="leave-btn">Salir</button>
       </div>
-      <div class="hud hint" id="hint">Hacé clic en la mesa para mirar con el mouse. Con <kbd>Esc</kbd> abrís el menú de pausa.</div>
       <div class="hud actions" id="actions"></div>
       <div class="hud offline" id="offline" hidden>Reconectando...</div>
       <div class="hud" id="overlay"></div>
@@ -471,7 +469,6 @@ export function mountGame(
     else if (wasLocked && !releasingForGameOver) setPause(true);
     wasLocked = locked;
     $('crosshair').hidden = !locked;
-    $('hint').hidden = locked;
   }
 
   canvas.addEventListener('mousedown', onMouseDown);
